@@ -4,8 +4,9 @@ authors = ["Éric Thiébaut <eric.thiebaut@univ-lyon1.fr>"]
 version = "0.1.0"
 
 [deps]
-Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 ArrayTools = "1dc0ca97-c5ce-4e77-ac6d-c576ac9d7f27"
+TwoDimensional = "1907e7ba-7586-4310-a2ba-dd01462aeb50"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [extras]
 Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
