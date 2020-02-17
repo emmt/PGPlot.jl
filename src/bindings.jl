@@ -156,12 +156,12 @@ isfile(joinpath(@__DIR__, "..", "deps", "deps.jl")) ||
 include(joinpath("..", "deps", "deps.jl"))
 
 # Basic types used by PGPlot library.  These definitions are to make changes easy.
-const PGBool   = Cint
-const PGInt    = Cint
-const PGFloat  = Cfloat
-const PGChar   = Cchar
-const PGString = Cstring
-const PGSymbol = Union{Char,Integer}
+const PGBool     = Cint
+const PGInt      = Cint
+const PGFloat    = Cfloat
+const PGChar     = Cchar
+const PGString   = Cstring
+const PGIntegers = Union{Integer,Char} # used for symbols, can be converted to PGInt
 
 # Arrays passed to PGPlot must have contiguous elements in colum-major order.
 const PGArray{T,N}  = DenseArray{T,N}
@@ -192,93 +192,44 @@ output(::Type{Bool}, x::Ref{PGInt}) = output(Bool, x[])
 """
 
 ```julia
-pglogical(x)
+pgarray(T, x) -> A
 ```
 
-converts Boolean `x` to PGPlot logical value.
+if `x` is an array, yields an array `A` with the same values as `x`, element
+type `T` and suitable for PGPlot routines; if `x` is a scalar, yields a
+reference (`Ref{T}`) with the value of `x`.  `T` should be `PGFloat` or
+`PGInt`.
+
+If `x` is already a dense array with element type `T`, `x` is returned.
 
 """
-pglogical(x::Bool) = (x ? one(PGBool) : zero(PGBool))
-
-"""
-
-```julia
-pgfloat(x)
-```
-
-converts `x` to floating-point value or array suitable for PGPlot routines.
-Argument can be a scalar or an array.
-
-"""
-pgfloat(x::PGFloat) = x
-pgfloat(x::PGArray{PGFloat,N}) where {N} = x
-pgfloat(x::Real) = PGFloat(x)
-pgfloat(x::AbstractArray{<:Real,N}) where {N} =
-    convert(Array{PGFloat,N}, x)
-
-pgintarr(x::Integer) = Ref{PGInt}(x)
-pgintarr(x::AbstractArray{<:Integer,N}) where {N} = convert(Array{PGInt,N}, x)
-pgintarr(x::PGArray{PGInt}) = x
-
-pgfltarr(x::Real) = Ref{PGFloat}(x)
-pgfltarr(x::AbstractArray{<:Real,N}) where {N} = convert(Array{PGFloat,N}, x)
-pgfltarr(x::PGArray{PGFloat}) = x
-
-pgarr(::Type{T}, x::Integer) where {T<:Integer} = Ref{T}(x)
-pgarr(::Type{T}, x::Real) where {T<:AbstractFloat} = Ref{T}(x)
-pgarr(::Type{T}, x::AbstractArray{<:Real,N}) where {T<:AbstractFloat,N} =
+pgarray(::Type{T}, x::PGIntegers) where {T<:Integer} = Ref{T}(x)
+pgarray(::Type{T}, x::Real) where {T<:AbstractFloat} = Ref{T}(x)
+pgarray(::Type{T}, x::PGArray{T,N}) where {T<:Integer,N} = x
+pgarray(::Type{T}, x::PGArray{T,N}) where {T<:AbstractFloat,N} = x
+pgarray(::Type{T}, x::AbstractArray{<:PGIntegers,N}) where {T<:Integer,N} =
     convert(Array{T,N}, x)
-pgarr(::Type{T}, x::AbstractArray{<:Integer,N}) where {T<:Integer,N} =
+pgarray(::Type{T}, x::AbstractArray{<:Real,N}) where {T<:AbstractFloat,N} =
     convert(Array{T,N}, x)
-pgarr(x::PGArray{T}) where {T} = x
 
 """
 
-```julia
-pginteger(x)
-```
-
-converts `x` to integer value or array suitable for PGPlot routines.
-Argument can be a scalar or an array.
+`pgintarr(x)` is just an alias for `pgarray(PGInt,x)`.
 
 """
-pginteger(x::PGInt) = x
-pginteger(x::PGArray{PGInt,N}) where {N} = x
-pginteger(x::Union{Integer,Char}) = PGInt(x)
-pginteger(x::AbstractArray{<:Union{Integer,Char},N}) where {N} =
-    convert(Array{PGInt,N}, x)
+pgintarr(x) = pgarray(PGInt, x)
 
 """
 
-```julia
-pgvector([T,] args...)
-```
-
-converts arguments `args...` into a vector of elements of type `T` in a
-form suitable for PGPlot routines.  If `T` is unspecified, it is
-`PGInt` if all arguments are integers and `PGFloat` otherwise.
+`pgfltarr(x)` is just an alias for `pgarray(PGFloat,x)`.
 
 """
-function pgvector(::Type{T}, args::Real...) where {T<:Union{PGFloat,PGInt}}
-    vec = Array{T}(undef, length(args))
-    @inbounds for i in 1:length(args)
-        vec[i] = args[i]
-    end
-    return vec
-end
-
-pgvector(args::Integer...) =
-    pgvector(PGInt, args...)
-
-pgvector(args::Real...) =
-    pgvector(PGFloat, args...)
+pgfltarr(x) = pgarray(PGFloat, x)
 
 # Default coordinate transform.
 const DEFAULT_XFORM = PGFloat[0, 1, 0,
                               0, 0, 1]
-
 default_xform() = DEFAULT_XFORM
-
 
 # Workspace arrays.
 const XFORM_WORKSPACE = Vector{Vector{PGFloat}}(undef, 0)
@@ -444,7 +395,7 @@ function submatrix(::Type{T},
                    A::AbstractMatrix) where {T}
     idim, jdim = size(A)
     _one, _idim, _jdim = one(PGInt), PGInt(idim), PGInt(jdim)
-    return (pgarr(T, A), _idim, _jdim, _one, _idim, _one, _jdim)
+    return (pgarray(T, A), _idim, _jdim, _one, _idim, _one, _jdim)
 end
 
 function submatrix(::Type{T},
@@ -926,7 +877,7 @@ function pgbin(x::AbstractVector{<:Real},
                y::AbstractVector{<:Real},
                cen::Bool = true)
     @check_vectors n x y
-    _pgbin(n, pgfloat(x), pgfloat(y), cen)
+    _pgbin(n, pgfltarr(x), pgfltarr(y), cen)
 end
 
 _pgbin(n::Int, x::PGVector{PGFloat}, y::PGVector{PGFloat}, cen::Bool) =
@@ -1623,7 +1574,7 @@ function pgerrb(dir::Integer,
                 y::AbstractVector{<:Real},
                 e::AbstractVector,
                 t::Real)
-    pgerrb(dir, pgfloat(x), pgfloat(y), pgfloat(e), t)
+    pgerrb(dir, pgfltarr(x), pgfltarr(y), pgfltarr(e), t)
 end
 
 function pgerrb(dir::Integer,
@@ -1663,7 +1614,7 @@ function pgerrx(x1::AbstractVector{<:Real},
                 x2::AbstractVector{<:Real},
                 y::AbstractVector{<:Real},
                 t::Real)
-    pgerrx(pgfloat(x1), pgfloat(x2), pgfloat(y), t)
+    pgerrx(pgfltarr(x1), pgfltarr(x2), pgfltarr(y), t)
 end
 
 function pgerrx(x1::PGVecOrRef{PGFloat},
@@ -1702,7 +1653,7 @@ function pgerry(x::AbstractVector{<:Real},
                 y1::AbstractVector{<:Real},
                 y2::AbstractVector{<:Real},
                 t::Real)
-    pgerry(pgfloat(x), pgfloat(y1), pgfloat(y2), t)
+    pgerry(pgfltarr(x), pgfltarr(y1), pgfltarr(y2), t)
 end
 
 function pgerry(x::PGVecOrRef{PGFloat},
@@ -2098,8 +2049,8 @@ Arguments:
 """
 function pghist(data::AbstractVector, datmin::Real, datmax::Real,
                 nbin::Integer, flag::Integer)
-    _cpghist(length(data), pgfltarr(data), pgfloat(datmin), pgfloat(datmax),
-             pginteger(nbin), pginteger(flag))
+    _cpghist(length(data), pgfltarr(data), PGFloat(datmin), PGFloat(datmax),
+             PGInt(nbin), PGInt(flag))
 end
 
 _cpghist(n, data, datmin, datmax, nbin, pgflag) =
@@ -2254,7 +2205,7 @@ edge of the window.
 """
 function pgline(x::AbstractVector{<:Real}, y::AbstractVector{<:Real})
     @check_vectors n x y
-    _cpgline(n, pgfloat(x), pgfloat(y))
+    _cpgline(n, pgfltarr(x), pgfltarr(y))
 end
 
 _cpgline(n::Int, x::PGVector{PGFloat}, y::PGVector{PGFloat}) =
@@ -2614,20 +2565,20 @@ point (see PGPT).  The first symbol is re-used for all `i`-th data such that `i
 ≥ length(sym)`.
 
 """
-pgpnts(x::Real, y::Real, sym::PGSymbol) = pgpt(x, y, sym)
+pgpnts(x::Real, y::Real, sym::PGIntegers) = pgpt(x, y, sym)
 
 function pgpnts(x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
-                sym::PGSymbol)
+                sym::PGIntegers)
     @check_vectors n x y
-    _cpgpnts(n, pgfloat(x), pgfloat(y), Ref{PGInt}(sym), 1)
+    _cpgpnts(n, pgfltarr(x), pgfltarr(y), Ref{PGInt}(sym), 1)
 end
 
 function pgpnts(x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
-                sym::AbstractVector{<:PGSymbol})
+                sym::AbstractVector{<:PGIntegers})
     @check_vectors n x y
     (ns = length(sym)) ≥ 1 ||
         throw(DimensionMismatch("`sym` must have at least one element"))
-    _cpgpnts(n, pgfloat(x), pgfloat(y), pginteger(sym), ns)
+    _cpgpnts(n, pgfltarr(x), pgfltarr(y), pgintarr(sym), ns)
 end
 
 function _cpgpnts(n::Integer, x::PGVecOrRef{PGFloat}, y::PGVecOrRef{PGFloat},
