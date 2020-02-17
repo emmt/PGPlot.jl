@@ -151,6 +151,8 @@ export
     pgwedg,
     pgwnad
 
+using ArrayTools
+
 isfile(joinpath(@__DIR__, "..", "deps", "deps.jl")) ||
     error("PGPlot not properly installed.  Please run Pkg.build(\"PGPlot\")")
 include(joinpath("..", "deps", "deps.jl"))
@@ -527,28 +529,6 @@ function to_string(buf::PGVector{UInt8}, len::Integer)
     buf[len+1] = 0
     unsafe_string(pointer(buf), len)
 end
-
-"""
-
-```julia
-axis_limits(I) = (i0,i1)
-```
-
-yields the limits `i0` and `i1` of index range `I` as a 2-tuple of `Int`'s and
-such that `i0:i1` represents the same indices as `I` (although not in the same
-order if `step(I) < 0`).  If `step(I)` is not equal to ±1, an `ArgumentError`
-exception is thrown.
-
-"""
-axis_limits(I::AbstractUnitRange{<:Integer}) =
-    (Int(first(I)), Int(last(I)))
-axis_limits(I::AbstractRange{<:Integer}) =
-    ((i0, i1, s) = (Int(first(I)), Int(last(I)), step(I));
-     (s == +1 ? (i0,i1) :
-      s == -1 ? (i1,i0) : throw_invalid_range_step()))
-
-@noinline throw_invalid_range_step() =
-    throw(ArgumentError("expecting a range with a step equal to ±1"))
 
 """
 

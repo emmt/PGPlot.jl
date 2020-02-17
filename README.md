@@ -7,7 +7,7 @@ interface to this library.
 If you are tired by the slowness of other Julia plotting packages, you may give
 a try to this one!
 
-There are two layers a low-level interface and a higher level one.  The low
+There are two layers: a low-level interface and a higher level one.  The low
 level interface is accessible via:
 
 ```using
@@ -31,11 +31,12 @@ For now installation is by-hand (it will be automated in a near future).
    drop-in replacement of PGPlot using Cairo for anti-aliased graphics but all
    tests have been done with the original PGPlot.
 
-2. Clone the `PGPlot.jl` repository.  From Julia interpreter, hit the ] key to
+2. Clone the `ArrayTools.jl` and `PGPlot.jl` repositories.  From Julia interpreter, hit the ] key to
    switch to the package manager REPL (you should get a `... pkg>` prompt) and
    type:
 
    ```julia
+   ... pkg> add https://github.com/emmt/ArrayTools.jl
    ... pkg> add https://github.com/emmt/PGPlot.jl
    ```
 
