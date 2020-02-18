@@ -1905,7 +1905,7 @@ function pggray(A::AbstractMatrix{<:Real},
 end
 
 # Argument `tr` moved to directly use the output of `submatrix`.
-_pggray(a, i1, i2, j1, j2, tr, fg, bg) =
+_pggray(a, idim, jdim, i1, i2, j1, j2, tr, fg, bg) =
     ccall((:cpggray, pgplotlib), Cvoid,
           (Ptr{PGFloat}, PGInt, PGInt, PGInt, PGInt,
            PGInt, PGInt, PGFloat, PGFloat, Ptr{PGFloat}),
