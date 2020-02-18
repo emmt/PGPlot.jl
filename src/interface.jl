@@ -1,22 +1,39 @@
+#
+# interface.jl --
+#
+# Implements high-level interface for plotting with the PGPlot library.
+#
+
 module Plotting
 
+export
+    Figure,
+    figure,
+    heatmap!,
+    heatmap,
+    hist!,
+    hist,
+    palette,
+    plot!,
+    plot,
+    scatter!,
+    scatter
+
 using ArrayTools, TwoDimensional
-using PGPlot.Bindings
-using PGPlot.Bindings: pgarray, DEFAULT_XFORM
+using ..PGPlot.Bindings
+using ..PGPlot.Colormaps
+using .Bindings: pgarray, DEFAULT_XFORM
 
 # FIXME: type piracy
 Base.Tuple(A::AffineTransform) = (A.x, A.xx, A.xy, A.y, A.yx, A.yy)
 
+
 # Structure used to wrap an integer so that some basic function can be extended
 # while avoiding type-piracy.
 struct Figure
-    num::Int   # Figure number
-end
-struct Device
-    id::PGInt # PGPlot device identifier
+    num::Int   # Figure number.
 end
 number(fig::Figure) = fig.num
-identifier(dev::Device) = dev.id
 
 const ExtentOption = Union{Nothing,NTuple{4,<:Union{Nothing,Real}}}
 const AxisStyleOption = Union{Nothing,Symbol,Integer}
@@ -26,6 +43,7 @@ const LabelOption = Union{Nothing,AbstractString,Symbol}
 const XFormOption = Union{Nothing, AffineTransform,NTuple{6,Real},
                           AbstractVector{<:Real},AbstractMatrix{<:Real}}
 const HeightOption = Union{Nothing,Real}
+const FigureOption = Union{Nothing,Figure,Integer}
 
 #=
 PGQCI -- inquire color index
@@ -72,7 +90,6 @@ const NORMAL_FONT = PGInt(1)
 const ROMAN_FONT  = PGInt(2)
 const ITALIC_FONT = PGInt(3)
 const SCRIPT_FONT = PGInt(4)
-
 
 function rgb_color(col::UInt32)
     mask = 0x000000FF
@@ -187,79 +204,183 @@ confirmation before advancing to next plot.
 """
 confirm(flag::Bool) = pgask(flag)
 
-
+# PGPlot has a rather small maximum number (GRIMAX = 8) of open devices.
+# We keep the list of open devices/figures in a vector.
 const DEFAULT_DEVICE = "/XSERVE"
-const FIGURES = Dict{Figure,Device}()
+const DEVICES = Vector{PGInt}(undef, 0)
+const BAD_DEVICE = eltype(DEVICES)(-1)
 const FIGCNT = Ref{Int}(0)
-
-checkfigure() =
-    pgqid() > 0 || error("there is no figure open/selected")
+const MAXFIGCNT = 100 # just used to detect wrong figure numbers
 
 """
 
 ```julia
-figure() -> id
+device(fig)
 ```
 
-yields the identifier of the current figure, or of the first available one
-or creates a new one (with the default device).
+yields the PGPlot device number associated with figure `fig`.  The result is a
+positive integer if there is an open PGPlot device for that figure, -1
+otherwise.
 
-FIXME: restrict to interactive figures
+"""
+device(fig::Figure) = device(number(fig))
+device(fig::Integer) = (1 ≤ fig ≤ length(DEVICES) ? DEVICES[fig] : BAD_DEVICE)
+
+"""
+
+```julia
+figure() -> fig
+figure(nothing) -> fig
+```
+
+create a new figure using the default plotting device and selects it as the
+current plotting device.  The figure is returned.
+
+```julia
+figure(dev::AbstractString) -> fig
+```
+
+opens the plotting device `dev`, selects it as the current plotting device and
+associates a new figure with it.  The figure is returned.
+
+```julia
+figure(num::Integer) -> fig
+```
+
+if figure number `num` exists, makes it associated plotting device the current
+one; otherwise opens the default plotting device, selects it as the current
+plotting device and associates it with the figure number `num`.  The figure is
+returned.
+
+```julia
+figure(fig::Figure) -> fig
+```
+
+checks that figure `fig` is associated with an open plotting device and makes
+it the current one.  The figure is returned.  An exception is thrown if `fig`
+is not associated with an open plotting device.
 
 """ figure
 
 # Create a new figure using the default device.
 figure() = figure(DEFAULT_DEVICE)
+figure(::Nothing) = figure()
 
 # Create a new figure for the given device string.
-function figure(dev::AbstractString)
-    id = pgopen(dev)
-    id ≥ 1 || error(string("cannot open PGPlot device: ", dev))
-    pgask(false)
-    return register(Device(id))
-end
+figure(dev::AbstractString) = register_device(open_device(dev))
 
-figure(num::Integer) = figure(Figure(num))
-
-function figure(fig::Figure)
-    dev = get(FIGURES, fig, Device(-1))
-    identifier(dev) ≥ 1 || throw_nonexisting_figure(fig)
-    pgslct(identifier(dev))
-end
-
-@noinline throw_nonexisting_figure(fig::Figure) =
-    throw(ArgumentError(string("Figure #", number(fig), " does not exist")))
-
-function current_figure()
-    id = pgqid()
-    for (fig, dev) in FIGURES
-        if identifier(dev) == id
-            return fig
+function figure(num::Integer)
+    1 ≤ num ≤ MAXFIGCNT || throw_invalid_figure_number(num)
+    if num ≤ length(DEVICES)
+        dev = DEVICES[num]
+        if dev ≥ 1
+            pgslct(dev)
+            return Figure(num)
         end
     end
-    return Figure(-1)
-end
-
-function register(dev::Device)
-    if identifier(dev) > 0
-        FIGCNT[] += 1
-        fig = Figure(FIGCNT[])
-        FIGURES[fig] = dev
-    else
-        fig = Figure(-1)
+    while length(DEVICES) < num
+        push!(DEVICES, BAD_DEVICE)
     end
-    return fig
+    DEVICES[num] = open_device(DEFAULT_DEVICE)
+    return Figure(num)
 end
 
-Base.isopen(fig::Figure) = number(fig) ≥ 1
+# Use an existing figure.
+function figure(fig::Figure)
+    dev = device(fig)
+    if dev > 0
+        pgslct(dev)
+        return fig
+    end
+    1 ≤ number(fig) ≤ length(DEVICES) && throw_device_closed(fig)
+    throw_nonexisting_figure(fig)
+end
+
+Base.isopen(fig::Figure) = device(fig) > 0
 
 function Base.close(fig::Figure)
-    dev = get(FIGURES, fig, Device(-1))
-    if identifier(dev) < 1
-         println(stderr, "Warning: Figure #", number(fig), " does not exist")
+    dev = device(fig)
+    if dev > 0
+        DEVICES[dev] = BAD_DEVICE
+        pgclos(dev)
+        return nothing
+    end
+    1 ≤ number(fig) ≤ length(DEVICES) && throw_device_closed(fig)
+    throw_nonexisting_figure(fig)
+end
+
+@noinline throw_invalid_figure_number(num::Integer) =
+    throw(ArgumentError(string("invalid figure number: ", num)))
+
+@noinline throw_invalid_device(dev::Integer) =
+    throw(ArgumentError(string("invalid PGPlot device number: ", dev)))
+
+@noinline throw_open_device_failure(dev::AbstractString) =
+    error(string("cannot open PGPlot device: ", dev))
+
+throw_nonexisting_figure(fig::Figure) = throw_nonexisting_figure(number(fig))
+@noinline throw_nonexisting_figure(num::Integer) =
+    throw(ArgumentError(string("Figure #", num, " does not exist")))
+
+throw_device_closed(fig::Figure) = throw_device_closed(number(fig))
+@noinline throw_device_closed(num::Integer) =
+    throw(ArgumentError(string("Plotting device of Figure #", num,
+                               " has been closed")))
+
+function current_figure()
+    dev = pgqid()
+    dev > 0 || error("there is no open plotting devices")
+    return register_device(dev)
+end
+
+select_figure(fig::Figure) = figure(fig)
+select_figure(num::Integer) = figure(num)
+select_figure(::Nothing) = select_figure()
+select_figure() = (if pgqid() < 1; figure(); end; nothing)
+
+function open_device(name::AbstractString)
+    dev = pgopen(name)
+    dev > 0 || throw_open_device_failure(name)
+    pgask(false) # do not wait for user input
+    if pgqinf("HARDCOPY") == "YES"
+        pgscr(0, 0,0,0) # set background color to white
+        pgscr(1, 1,1,1) # set foreground color to black
     else
-         delete!(FIGURES, fig)
-         pgclos(identifier(dev))
+        pgscr(0, 0,0,0) # set background color to black
+        pgscr(1, 1,1,1) # set foreground color to white
+    end
+    return dev
+end
+
+function register_device(dev::Integer)
+    dev > 0 || throw_invalid_device(dev)
+    j = 0
+    @inbounds for i in 1:length(DEVICES)
+        if DEVICES[i] == dev
+            return Figure(i)
+        elseif j == 0 && DEVICES[i] < 1
+            j = i
+        end
+    end
+    if j != 0
+        DEVICES[j] = dev
+        return Figure(j)
+    end
+    if length(DEVICES) < MAXFIGCNT
+        push!(DEVICES, dev)
+        return Figure(length(DEVICES))
+    end
+    error("too many registered figures")
+end
+
+function forget_device(dev::Integer)
+    if dev > 0
+        @inbounds for i in 1:length(DEVICES)
+            if DEVICES[i] == dev
+                DEVICES[i] = BAD_DEVICE
+                break
+            end
+        end
     end
     nothing
 end
@@ -271,14 +392,18 @@ get_color(::Nothing, def::Integer) = get_color(def)
 
 
 function plot(x::AbstractVector, y::AbstractVector;
+              fig::FigureOption = nothing,
               color::ColorOption = nothing,
               kwds...)
+    select_figure(fig)
     frame(x, y; kwds...)
     _plot(x, y, color)
 end
 
 function plot!(x::AbstractVector, y::AbstractVector;
+               fig::FigureOption = nothing,
                color::ColorOption = nothing)
+    select_figure(fig)
     check(x, y)
     _plot(x, y, color)
 end
@@ -290,16 +415,20 @@ function _plot(x::AbstractVector, y::AbstractVector,
 end
 
 function hist(x::AbstractVector, y::AbstractVector;
+              fig::FigureOption = nothing,
               center::Bool = true,
               color::ColorOption = nothing,
               kwds...)
+    select_figure(fig)
     frame(x, y; kwds...)
     _hist(x, y, center, color)
 end
 
 function hist!(x::AbstractVector, y::AbstractVector;
+               fig::FigureOption = nothing,
                center::Bool = true,
                color::ColorOption = nothing)
+    select_figure(fig)
     check(x, y)
     _hist(x, y, center, color)
 end
@@ -311,15 +440,19 @@ end
 
 function scatter(x::AbstractVector, y::AbstractVector,
                  sym::Union{Integer,AbstractVector{<:Integer}};
+                 fig::FigureOption = nothing,
                  color::ColorOption = nothing,
                  kwds...)
+    select_figure(fig)
     frame(x, y; kwds...)
     _scatter(x, y, sym, color)
 end
 
 function scatter!(x::AbstractVector, y::AbstractVector,
                   sym::Union{Integer,AbstractVector{<:Integer}};
+                  fig::FigureOption = nothing,
                   color::ColorOption = nothing)
+    select_figure(fig)
     check(x, y)
     _scatter(x, y, sym, color)
 end
@@ -348,12 +481,17 @@ function heatmap!(A::AbstractMatrix{<:Real},
 end
 
 function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
-                 grayscale::Bool = false,
+                 fig::FigureOption = nothing,
                  vmin::Union{Nothing,Real} = nothing,
                  vmax::Union{Nothing,Real} = nothing,
                  cbar::Union{Nothing,Char} = 'R',
                  zlabel::AbstractString = "",
+                 cmap::Union{Nothing,AbstractString} = nothing,
+                 just::Bool = true,
                  kwds...)
+    # Select figure.
+    select_figure(fig)
+
     # Get range of values to plot.
     check(A)
     bg, fg = get_vrange(A, vmin, vmax)
@@ -363,33 +501,39 @@ function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
     xmin, xmax, ymin, ymax = get_extent(PGFloat, I, J, tr)
 
     # Draw viewport.
-    frame(xmin, xmax, ymin, ymax; kwds...)
+    frame(xmin, xmax, ymin, ymax; just = just, kwds...)
 
     # Draw map.
-    if grayscale
-        pggray(A, I, J, fg, bg, tr)
-    else
-        pgimag(A, I, J, fg, bg, tr)
+    if cmap !== nothing
+        palette(cmap)
     end
+    #if grayscale
+    #    pggray(A, I, J, fg, bg, tr)
+    #else
+    #    pgimag(A, I, J, fg, bg, tr)
+    #end
+    pgimag(A, I, J, fg, bg, tr)
 
     # Optional color bar.
     if cbar !== nothing
-        colorbar(bg, fg; side = cbar, grayscale = grayscale, label = zlabel)
+        colorbar(bg, fg; side = cbar, label = zlabel)
     end
 end
 
 function heatmap!(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
-                  grayscale::Bool = false,
+                  fig::FigureOption = nothing,
                   vmin::Union{Nothing,Real} = nothing,
                   vmax::Union{Nothing,Real} = nothing)
+    select_figure(fig)
     check(A)
     bg, fg = get_vrange(A, vmin, vmax)
-    I, J = axes(A)
-    if grayscale
-        pggray(A, I, J, fg, bg, tr)
-    else
-        pgimag(A, I, J, fg, bg, tr)
-    end
+    #I, J = axes(A)
+    #if grayscale
+    #    pggray(A, I, J, fg, bg, tr)
+    #else
+    #    pgimag(A, I, J, fg, bg, tr)
+    #end
+    pgimag(A, fg, bg, tr)
 end
 
 # FIXME: remember settings of last color/gray image

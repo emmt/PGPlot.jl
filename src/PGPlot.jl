@@ -1,8 +1,24 @@
 module PGPlot
 
+export
+    Figure,
+    figure,
+    heatmap!,
+    heatmap,
+    hist!,
+    hist,
+    palette,
+    plot!,
+    plot,
+    scatter!,
+    scatter
+
 include("bindings.jl")
-using .Bindings
+
+include("colormaps.jl")
+using .Colormaps
 
 include("interface.jl")
+using .Plotting
 
 end # module
