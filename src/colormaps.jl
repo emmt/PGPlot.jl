@@ -16,9 +16,6 @@ import PGPlot.Bindings: pgqcr, pgscr
 
 const DATA_DIR = normpath(joinpath(@__DIR__, "..", "data"))
 
-# FIXME: The following is to deal with a bug.
-const SWAP_COLOR_INDICES = true
-
 struct RGB{T}
     r::T
     g::T
@@ -223,9 +220,6 @@ function palette(lut::AbstractVector{RGB{UInt8}}, cmin::Int, cmax::Int)
     I = axes(lut, 1)
     imin, imax = Int(first(I)), Int(last(I))
     if cmin != cmax
-        if SWAP_COLOR_INDICES
-            cmin, cmax = cmax, cmin
-        end
         a = (imax - imin)/(cmax - cmin)
         for c in min(cmin,cmax):max(cmin,cmax)
             t = (c - cmin)*a + imin
@@ -336,13 +330,10 @@ function set_color_ramp(cmin::Int, cmax::Int,
         end
     else
         # Interpolate the given colors.
-        if SWAP_COLOR_INDICES
-            cmin, cmax = cmax, cmin
-        end
         f = one(PGFloat)/PGFloat(cmax - cmin)
         for c in min(cmin,cmax):max(cmin,cmax)
-            a0 = (c - cmin)*f
-            a1 = one(a0) - a0
+            a1 = (c - cmin)*f
+            a0 = one(a1) - a1
             pgscr(c, a0*lo + a1*hi)
         end
     end

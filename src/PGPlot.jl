@@ -2,6 +2,7 @@ module PGPlot
 
 export
     Figure,
+    colorbar,
     figure,
     heatmap!,
     heatmap,

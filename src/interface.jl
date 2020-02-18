@@ -8,6 +8,7 @@ module Plotting
 
 export
     Figure,
+    colorbar,
     figure,
     heatmap!,
     heatmap,
@@ -464,6 +465,7 @@ function _scatter(x::AbstractVector, y::AbstractVector,
     pgpnts(x, y, sym)
 end
 
+
 # @btime Plotting.heatmap($z) for a 81×81 image
 #   8.112 ms (2 allocations: 25.77 KiB)
 
@@ -494,7 +496,7 @@ function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
 
     # Get range of values to plot.
     check(A)
-    bg, fg = get_vrange(A, vmin, vmax)
+    bg, fg = get_zrange(A, vmin, vmax)
 
     # Get maximal extent of coordinates.
     I, J = axes(A)
@@ -507,12 +509,7 @@ function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
     if cmap !== nothing
         palette(cmap)
     end
-    #if grayscale
-    #    pggray(A, I, J, fg, bg, tr)
-    #else
-    #    pgimag(A, I, J, fg, bg, tr)
-    #end
-    pgimag(A, I, J, fg, bg, tr)
+    pgimag(A, I, J, bg, fg, tr)
 
     # Optional color bar.
     if cbar !== nothing
@@ -526,24 +523,40 @@ function heatmap!(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
                   vmax::Union{Nothing,Real} = nothing)
     select_figure(fig)
     check(A)
-    bg, fg = get_vrange(A, vmin, vmax)
-    #I, J = axes(A)
-    #if grayscale
-    #    pggray(A, I, J, fg, bg, tr)
-    #else
-    #    pgimag(A, I, J, fg, bg, tr)
-    #end
-    pgimag(A, fg, bg, tr)
+    bg, fg = get_zrange(A, vmin, vmax)
+    pgimag(A, bg, fg, tr)
 end
 
-# FIXME: remember settings of last color/gray image
-function colorbar(vmin::Real = PGFloat(0), vmax::Real = PGFloat(1);
+# The following are to remember image settings for the color-bar.
+const last_bg = Ref{PGFloat}(1)
+const last_fg = Ref{PGFloat}(1)
+
+# Like get_vrange but fix equal endpoints and remember values
+# for the color-bar.
+function get_zrange(A::AbstractMatrix{PGFloat}, vmin, vmax)
+    bg, fg = get_vrange(A, vmin, vmax)
+    if bg == fg
+        # Quick fix.
+        bg -= tiny(bg)
+        fg += tiny(fg)
+    end
+    last_bg[] = bg
+    last_fg[] = fg
+    return (bg, fg)
+end
+
+tiny(val::AbstractFloat) =
+    (del = oftype(val, 0.001);
+     val == zero(val) ? del : abs(val)*del)
+
+function colorbar(vmin::Real = last_bg[],
+                  vmax::Real = last_fg[];
                   side::Char = 'R',
                   grayscale::Bool = false,
                   label::AbstractString = "",
                   spacing::Real = PGFloat(2),
                   width::Real = PGFloat(5))
-    pgwedg(side*(grayscale ? 'G' : 'I'), spacing, width, vmax, vmin, label)
+    pgwedg(side*(grayscale ? 'G' : 'I'), spacing, width, vmin, vmax, label)
 end
 
 """
@@ -703,33 +716,6 @@ function get_vrange(::Type{T}, A::AbstractArray, opt::Tuple,
                     I::NTuple{2,Integer}) where {T}
     get_vrange(T, A, opt[I[1]], opt[I[2]])
 end
-
-#=
-function get_xrange(extent::Union{Nothing,Tuple{Nothing,Nothing,Any,Any}},
-                    x::AbstractVector{<:Real})
-    nicerange(extrema(x))
-end
-
-function get_yrange(extent::Union{Nothing,Tuple{Any,Any,Nothing,Nothing}},
-                    y::AbstractVector{<:Real})
-    nicerange(extrema(y))
-end
-
-get_xrange(extent::NTuple{4,Union{Nothing,Real}}, x::AbstractVector{<:Real}) =
-    nicerange(get_xmin(extent, x), get_xmax(extent, x))
-get_yrange(extent::NTuple{4,Union{Nothing,Real}}, y::AbstractVector{<:Real}) =
-    nicerange(get_ymin(extent, y), get_ymax(extent, y))
-
-get_xmin(extent::Tuple{Nothing,Any,Any,Any}, x::AbstractVector{<:Real}) = minimum(x)
-get_xmin(extent::Tuple{Real,Any,Any,Any}, x::AbstractVector{<:Real}) = extent[1]
-get_xmax(extent::Tuple{Any,Nothing,Any,Any}, x::AbstractVector{<:Real}) = maximum(x)
-get_xmax(extent::Tuple{Any,Real,Any,Any}, x::AbstractVector{<:Real}) = extent[2]
-
-get_ymin(extent::Tuple{Any,Any,Nothing,Any}, y::AbstractVector{<:Real}) = minimum(y)
-get_ymin(extent::Tuple{Real,Any,Any,Any}, y::AbstractVector{<:Real}) = extent[3]
-get_ymax(extent::Tuple{Any,Any,Any,Nothing}, y::AbstractVector{<:Real}) = maximum(y)
-get_ymax(extent::Tuple{Any,Any,Any,Real}, y::AbstractVector{<:Real}) = extent[4]
-=#
 
 nicerange(x::Tuple{Real,Real}) = nicerange(x[1], x[2])
 nicerange(x1::Real, x2::Real) = nicerange(PGFloat(x1), PGFloat(x2))
