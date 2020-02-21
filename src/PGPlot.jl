@@ -10,6 +10,7 @@ export
     heatmap,
     hist!,
     hist,
+    mouse,
     palette,
     scatter!,
     scatter

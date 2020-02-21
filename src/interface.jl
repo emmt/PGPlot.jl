@@ -16,6 +16,7 @@ export
     heatmap,
     hist!,
     hist,
+    mouse,
     palette,
     scatter!,
     scatter
@@ -637,6 +638,122 @@ function colorbar(vmin::Real = last_bg[],
                   width::Real = PGFloat(5))
     pgwedg(side*'I', spacing, width, vmin, vmax, label)
 end
+
+
+"""
+
+```julia
+mouse(x0, y0; kwds...) -> (x, y, c)
+```
+
+yields cursor position `(x,y)` and character `c` typed by the user.  The
+position is returned in world coordinates. If the device has no cursor or if
+some other error occurs, the value `Char(0)` (ASCII NUL character) is returned
+for `c`.  For an X-window device, clicking the 1st mouse button is reported as
+an `A`, clicking the 2nd mouse button is reported as a `D` and clicking other
+mouse buttons is reported as an `X`.
+
+Keyword `fig` can be used to specify the figure to consider.
+
+Keyword `color` can be used to specify the color of the line(s) drawn for the
+feedback.
+
+Keyword `mode` can be used to specify the feedback for the user:
+
+- If `mode = :none` (the default) no specific feedback is applied.
+
+- If `mode = :line`, a straight line is drawn joining the anchor point and the
+  cursor position.
+
+- If `mode = :box`, a hollow rectangle is extended as the cursor is moved, with
+  one vertex at the anchor point `(x0,y0)` and the opposite vertex at the
+  current cursor position; the edges of the rectangle are horizontal and
+  vertical.
+
+- If `mode = :vrange`, two horizontal lines are extended across the width of
+  the display, one drawn at ordinate `y0` of the anchor point and the other
+  through the moving cursor position. This could be used to select a Y-axis
+  range when one end of the range is known.
+
+- If `mode = :hrange`, two vertical lines are extended over the height of the
+  display, one drawn at abscissa `x0` of the anchor point and the other through
+  the moving cursor position. This could be used to select an X-axis range when
+  one end of the range is known.
+
+- If `mode = :hline`, a horizontal line is extended through the cursor position
+  over the width of the display. This could be used to select an X-axis value
+  such as the start of an X-axis range. The anchor point is ignored.  :vline
+
+- If `mode = :vline`, a vertical line is extended through the cursor position
+  over the height of the display. This could be used to select a Y-axis value
+  such as the start of a Y-axis range. The anchor point is ignored.  :hline
+
+- If `mode = :cross`, a cross-hair, centered on the cursor, is extended over
+  the width and height of the display. The anchor point is ignored.
+
+Argument `(x0,y0)` specifies the position of the anchor point in world
+coordinates.  The anchor point may be omitted if `mode` is not `:line`, `:box`,
+`:vrange` or `:hrange`.
+
+The returned cursor position can be a `Point` if the first positional argument
+is `Point` or if the anchor is specified as a `Point`.  For instance:
+
+```julia
+mouse(Point) -> Point(x, y), c
+mouse(Point(x0,y0)) -> Point(x, y), c
+```
+
+"""
+function mouse(;
+               fig::FigureOption = nothing,
+               mode::Symbol = :none,
+               color::ColorOption = nothing)
+    md = (mode == :none  ?  PGInt(0) :
+          mode == :hline ?  PGInt(5) :
+          mode == :vline ?  PGInt(6) :
+          mode == :cross ?  PGInt(7) :
+          throw_invalid_mouse_mode(mode))
+    select_figure(fig)
+    mode == :none || pgsci(get_color(color))
+    # Start with the (unused) anchor point at the center of the "window".
+    xmin, xmax, ymin, ymax = pgqwin()
+    pgband(md, false, PGFloat((xmin + xmax)/2), PGFloat((ymin + ymax)/2))
+end
+
+function mouse(x0::Real, y0::Real;
+               fig::FigureOption = nothing,
+               mode::Symbol = :none,
+               color::ColorOption = nothing)
+    md = (mode == :none   ?  PGInt(0) :
+          mode == :line   ?  PGInt(1) :
+          mode == :box    ?  PGInt(2) :
+          mode == :vrange ?  PGInt(3) :
+          mode == :hrange ?  PGInt(4) :
+          mode == :hline  ?  PGInt(5) :
+          mode == :vline  ?  PGInt(6) :
+          mode == :cross  ?  PGInt(7) :
+          throw_invalid_mouse_mode(mode))
+    select_figure(fig)
+    mode == :none || pgsci(get_color(color))
+    pgband(md, false, PGFloat(x0), PGFloat(y0))
+end
+
+function mouse(::Type{Point}, args...; kwds...)
+    x, y, c = mouse(args...; kwds...)
+    return Point(x, y), c
+end
+
+function mouse(P::Point; kwds...)
+    x, y, c = mouse(P.x, P.y; kwds...)
+    return Point(x, y), c
+end
+
+@noinline throw_invalid_mouse_mode(val) =
+    throw(ArgumentError(val == :line || val == :box ||
+                        val == :vrange || val == :hrange ?
+                        string("invalid mouse mode ", val,
+                               " or specify anchor point") :
+                        string("invalid mouse mode ", val)))
 
 """
 
