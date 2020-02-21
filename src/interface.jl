@@ -9,14 +9,14 @@ module Plotting
 export
     Figure,
     colorbar,
+    curve!,
+    curve,
     figure,
     heatmap!,
     heatmap,
     hist!,
     hist,
     palette,
-    plot!,
-    plot,
     scatter!,
     scatter
 
@@ -45,6 +45,9 @@ const XFormOption = Union{Nothing, AffineTransform,NTuple{6,Real},
                           AbstractVector{<:Real},AbstractMatrix{<:Real}}
 const HeightOption = Union{Nothing,Real}
 const FigureOption = Union{Nothing,Figure,Integer}
+
+const Marker = Union{Integer,Char} # FIXME: Symbol?
+const Markers = Union{Marker,AbstractVector{<:Marker}}
 
 # Color index to use for color set by value/name.
 const USER_COLOR_INDEX = PGInt(9)
@@ -275,35 +278,122 @@ function forget_device(dev::Integer)
     nothing
 end
 
-function plot(x::AbstractVector, y::AbstractVector;
-              fig::FigureOption = nothing,
-              color::ColorOption = nothing,
-              kwds...)
+"""
+
+```julia
+frame(...)
+```
+
+draws the environment of subsequent plots.
+
+"""
+function frame(xmin::Real, xmax::Real, ymin::Real, ymax::Real;
+               fig::FigureOption = nothing,
+               wait::Bool = false,
+               just::Bool = false,
+               style::AxisStyleOption = nothing,
+               xlabel::LabelOption = nothing,
+               ylabel::LabelOption = nothing,
+               title::LabelOption = nothing,
+               textcolor::ColorOption = nothing,
+               framecolor::ColorOption = nothing)
     select_figure(fig)
-    frame(x, y; kwds...)
-    _plot(x, y, color)
+    pgsci(get_color(framecolor, DEFAULT_FRAME_COLOR))
+    pgenv(xmin, xmax, ymin, ymax, just, get_axis_style(style))
+    if xlabel !== nothing || ylabel !== nothing || title !== nothing
+        # deal with colors, size, text style
+        pgsci(get_color(textcolor, DEFAULT_TITLE_COLOR))
+        pglab(get_label(xlabel), get_label(ylabel), get_label(title))
+    end
 end
 
-function plot!(x::AbstractVector, y::AbstractVector;
+function frame(x::AbstractVector, y::AbstractVector;
+               extent::ExtentOption = nothing,
+               kwds...)
+    check(x, y)
+    xmin, xmax = get_vrange(PGFloat, x, extent, (1,2))
+    ymin, ymax = get_vrange(PGFloat, y, extent, (3,4))
+    frame(xmin, xmax, ymin, ymax; kwds...)
+end
+
+"""
+
+```julia
+curve([x,] y; kwds...)
+```
+
+draws a frame box (with [`frame`](@ref)) and a curve (as a polyline) joining
+the points defined by abscissae `x` and ordinates `y` (both being vectors in
+that case).  If `x` is missing, the vector `y` is plotted against its indices.
+
+To plot functions, do one of:
+
+```julia
+curve(x, fy; kwds...)      # plot fy(x) against x
+curve(fx, y; kwds...)      # plot y against fx(y)
+curve(t, fx, fy; kwds...)  # plot fy(t) against fx(t) (parametric plot)
+```
+
+To add a curve to an existing plot, call [`curve!`](@ref) instead.
+
+Possible keywords:
+
+- `color` specifies the color of the lines.
+
+Other keywods are transmitted to [`frame`](@ref) used to draw the frame box
+(e.g., `fig`, `xlabel`, `ylabel`, `title`, `extent`, ...).
+
+"""
+function curve(x::AbstractVector, y::AbstractVector;
+              color::ColorOption = nothing,
+              kwds...)
+    frame(x, y; kwds...)
+    _curve(x, y, color)
+end
+
+"""
+
+```julia
+curve!(args...; kwds...)
+```
+
+draws a curve in the current frame preserving existing contents.  Arguments are
+the same as for [`curve`](@ref).
+
+Possible keywords: `color`, `fig`.
+
+- `color` specifies the color of the lines.
+- `fig` specifies the figure where to draw.
+
+"""
+function curve!(x::AbstractVector, y::AbstractVector;
                fig::FigureOption = nothing,
                color::ColorOption = nothing)
     select_figure(fig)
     check(x, y)
-    _plot(x, y, color)
+    _curve(x, y, color)
 end
 
-function _plot(x::AbstractVector, y::AbstractVector,
+# Helper for `curve` and `curve!` methods.
+function _curve(x::AbstractVector, y::AbstractVector,
                 color::ColorOption)
     pgsci(get_color(color))
     pgline(x, y)
 end
 
+"""
+
+```julia
+hist([x,] y; kwds...)
+```
+
+draws a histogram of `y` against `x`, that is a stair-style curve.
+
+"""
 function hist(x::AbstractVector, y::AbstractVector;
-              fig::FigureOption = nothing,
               center::Bool = true,
               color::ColorOption = nothing,
               kwds...)
-    select_figure(fig)
     frame(x, y; kwds...)
     _hist(x, y, center, color)
 end
@@ -317,23 +407,31 @@ function hist!(x::AbstractVector, y::AbstractVector;
     _hist(x, y, center, color)
 end
 
+# Helper for `hist` and `hist!` methods.
 function _hist(x, y, center::Bool, color::ColorOption)
     pgsci(get_color(color))
     pgbin(x, y, center)
 end
 
+"""
+
+```julia
+scatter([x,] y, sym; kwds...)
+```
+
+draws points with symbol `sym` at coordinates `(x,y)`.
+
+"""
 function scatter(x::AbstractVector, y::AbstractVector,
-                 sym::Union{Integer,AbstractVector{<:Integer}};
-                 fig::FigureOption = nothing,
+                 sym::Markers;
                  color::ColorOption = nothing,
                  kwds...)
-    select_figure(fig)
     frame(x, y; kwds...)
     _scatter(x, y, sym, color)
 end
 
 function scatter!(x::AbstractVector, y::AbstractVector,
-                  sym::Union{Integer,AbstractVector{<:Integer}};
+                  sym::Markers;
                   fig::FigureOption = nothing,
                   color::ColorOption = nothing)
     select_figure(fig)
@@ -341,6 +439,7 @@ function scatter!(x::AbstractVector, y::AbstractVector,
     _scatter(x, y, sym, color)
 end
 
+# Helper for `scatter` and `scatter!` methods.
 function _scatter(x::AbstractVector, y::AbstractVector,
                   sym::Union{Integer,AbstractVector{<:Integer}},
                   color::ColorOption)
@@ -348,25 +447,83 @@ function _scatter(x::AbstractVector, y::AbstractVector,
     pgpnts(x, y, sym)
 end
 
+# Extend curve-like methods.
+for func in (:curve, :curve!, :hist, :hist!)
+    @eval begin
 
-# @btime Plotting.heatmap($z) for a 81×81 image
-#   8.112 ms (2 allocations: 25.77 KiB)
+        $func(y::AbstractVector; kwds...) =
+            $func(axes(y,1), y; kwds...)
 
+        $func(x::AbstractVector, fy; kwds...) =
+            $func(x, PGFloat[fy(x[i]) for i in eachindex(x)]; kwds...)
+
+        $func(fx, y::AbstractVector; kwds...) =
+            $func(PGFloat[fx(y[i]) for i in eachindex(y)], y; kwds...)
+
+        $func(t::AbstractVector, fx, fy; kwds...) =
+            $func(PGFloat[fx(t[i]) for i in eachindex(t)],
+                  PGFloat[fy(t[i]) for i in eachindex(t)]; kwds...)
+    end
+end
+
+for func in (:scatter, :scatter!)
+    @eval begin
+
+        $func(y::AbstractVector, sym::Markers; kwds...) =
+            $func(axes(y,1), y, sym; kwds...)
+
+        $func(x::AbstractVector, fy, sym::Markers; kwds...) =
+            $func(x, PGFloat[fy(x[i]) for i in eachindex(x)], sym; kwds...)
+
+        $func(fx, y::AbstractVector, sym::Markers; kwds...) =
+            $func(PGFloat[fx(y[i]) for i in eachindex(y)], y, sym; kwds...)
+
+        $func(t::AbstractVector, fx, fy, sym::Markers; kwds...) =
+            $func(PGFloat[fx(t[i]) for i in eachindex(t)],
+                  PGFloat[fy(t[i]) for i in eachindex(t)], sym; kwds...)
+    end
+end
+
+"""
+
+```julia
+heatmap(A, tr=[0,1,0, 0,0,1]; kwds...)
+```
+
+draws a *heat-map* , that is a map whose cells have pseudo-colors computed from
+the values in the 2-dimensional array `A`.  By default, the first and second
+dimensions of `A` are assumed to correspond to the abscissa and oridinate axes
+respectively.
+
+Keywords (other keywords are passed to [`frame`](@ref)):
+
+- `vmin` and `vmax` specify the range of values to consider.  It is possible to
+  have `vmin > vmax` to reverse the order of the colors.  If unspecified, the
+  extreme values of `A` are considered.
+
+- `cbar` specifies where to put a color-bar: `cbar = 'L'` `'R'`, `'T'` or `'B'`
+  to draw a color-bar on the Left, Right, Top or Bottom side of the frame;
+  `cbar = nothing` to draw no color-bar.  By default, `cbar = 'R'`.  Keyword
+  `zlabel` can be used to specify a label for the color-bar.  For more options,
+  use `cbar = nothing` and call [`colorbar`](@ref) directly after drawing the
+  heat-map (the range of values are automatically saved by `heatmap` and need
+  not be specified to `colorbar` in this case).
+
+- `just` specifies whether both axis should have the same scale or not.  By
+  default, `just = true`.
+
+To add another heat-map to an existing plot, call [`heatmap!`](@ref) instead.
+
+"""
 function heatmap(A::AbstractMatrix{<:Real},
                  xform::XFormOption = DEFAULT_XFORM;
                  kwds...)
     heatmap(pgarray(PGFloat, A), get_xform(xform); kwds...)
 end
 
-
-function heatmap!(A::AbstractMatrix{<:Real},
-                  xform::XFormOption = DEFAULT_XFORM;
-                  kwds...)
-    heatmap!(pgarray(PGFloat, A), pgarray(PGFloat, xform); kwds...)
-end
-
+# @btime Plotting.heatmap($z) for a 81×81 image
+#   8.112 ms (2 allocations: 25.77 KiB)
 function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
-                 fig::FigureOption = nothing,
                  vmin::Union{Nothing,Real} = nothing,
                  vmax::Union{Nothing,Real} = nothing,
                  cbar::Union{Nothing,Char} = 'R',
@@ -374,9 +531,6 @@ function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
                  cmap::Union{Nothing,AbstractString} = nothing,
                  just::Bool = true,
                  kwds...)
-    # Select figure.
-    select_figure(fig)
-
     # Get range of values to plot.
     check(A)
     bg, fg = get_zrange(A, vmin, vmax)
@@ -400,6 +554,23 @@ function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
     end
 end
 
+"""
+
+```julia
+heatmap!(A, tr=[0,1,0, 0,0,1]; kwds...)
+```
+
+draws a *heat-map* in the current frame preserving existing contents.
+Arguments are the same as for [`heatmap`](@ref).  The only supported keywords
+are `vmin`, `vmax` and `fig`.
+
+"""
+function heatmap!(A::AbstractMatrix{<:Real},
+                  xform::XFormOption = DEFAULT_XFORM;
+                  kwds...)
+    heatmap!(pgarray(PGFloat, A), pgarray(PGFloat, xform); kwds...)
+end
+
 function heatmap!(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
                   fig::FigureOption = nothing,
                   vmin::Union{Nothing,Real} = nothing,
@@ -411,7 +582,7 @@ function heatmap!(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
 end
 
 # The following are to remember image settings for the color-bar.
-const last_bg = Ref{PGFloat}(1)
+const last_bg = Ref{PGFloat}(0)
 const last_fg = Ref{PGFloat}(1)
 
 # Like get_vrange but fix equal endpoints and remember values
@@ -432,14 +603,39 @@ tiny(val::AbstractFloat) =
     (del = oftype(val, 0.001);
      val == zero(val) ? del : abs(val)*del)
 
+"""
+
+```julia
+colorbar(vmin, vmax)
+```
+
+draws a color-bar for values in the range `vmin` to `vmax`.  It is possible to
+have `vmin > vmax` to reverse the order of the colors.  If unspecified, the
+last values set by [`heatmap`](@ref) or [`heatmap!`](@ref) are considered.
+
+Keywords:
+
+- `side` specifies where to draw the color-bar: `side = 'L'` `'R'`, `'T'` or
+  `'B'` to draw a color-bar on the Left, Right, Top or Bottom side of the
+  frame. The default is to draw the color-bar on the right.
+
+- `label` specifies a label for the color-bar.
+
+- `spacing` specifies a distance breween the color-bar and the frame border in
+  units of the current character size.  The value may be negative to draw the
+  color-bar inside the frame.
+
+- `width` specifies the thickness of the color-bar in units of the current
+  character size.
+
+"""
 function colorbar(vmin::Real = last_bg[],
                   vmax::Real = last_fg[];
                   side::Char = 'R',
-                  grayscale::Bool = false,
                   label::AbstractString = "",
                   spacing::Real = PGFloat(2),
                   width::Real = PGFloat(5))
-    pgwedg(side*(grayscale ? 'G' : 'I'), spacing, width, vmin, vmax, label)
+    pgwedg(side*'I', spacing, width, vmin, vmax, label)
 end
 
 """
@@ -522,42 +718,6 @@ function get_extent(::Type{T},
     ymin = min(y1, y2, y3, y4)
     ymax = max(y1, y2, y3, y4)
     return (xmin, xmax, ymin, ymax)
-end
-
-"""
-
-```julia
-frame(...)
-```
-
-draws the environment of subsequent plots.
-
-"""
-function frame(xmin::Real, xmax::Real, ymin::Real, ymax::Real;
-               wait::Bool = false,
-               just::Bool = false,
-               style::AxisStyleOption = nothing,
-               xlabel::LabelOption = nothing,
-               ylabel::LabelOption = nothing,
-               title::LabelOption = nothing,
-               textcolor::ColorOption = nothing,
-               framecolor::ColorOption = nothing)
-    pgsci(get_color(framecolor, DEFAULT_FRAME_COLOR))
-    pgenv(xmin, xmax, ymin, ymax, just, get_axis_style(style))
-    if xlabel !== nothing || ylabel !== nothing || title !== nothing
-        # deal with colors, size, text style
-        pgsci(get_color(textcolor, DEFAULT_TITLE_COLOR))
-        pglab(get_label(xlabel), get_label(ylabel), get_label(title))
-    end
-end
-
-function frame(x::AbstractVector, y::AbstractVector;
-               extent::ExtentOption = nothing,
-               kwds...)
-    check(x, y)
-    xmin, xmax = get_vrange(PGFloat, x, extent, (1,2))
-    ymin, ymax = get_vrange(PGFloat, y, extent, (3,4))
-    frame(xmin, xmax, ymin, ymax; kwds...)
 end
 
 """

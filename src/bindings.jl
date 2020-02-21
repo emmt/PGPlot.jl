@@ -165,8 +165,8 @@ const PGFloat    = Cfloat
 const PGChar     = Cchar
 const PGString   = Cstring
 
-# PGIntegers are used for symbols, can be converted to PGInt.
-const PGIntegers = Union{Integer,Char}
+# PGMarker are used for symbols, can be converted to PGInt.
+const PGMarker = Union{Integer,Char}
 
 # Arrays passed to PGPlot must have contiguous elements in colum-major order.
 const PGArray{T,N}  = DenseArray{T,N}
@@ -208,11 +208,11 @@ reference (`Ref{T}`) with the value of `x`.  `T` should be `PGFloat` or
 If `x` is already a dense array with element type `T`, `x` is returned.
 
 """
-pgarray(::Type{T}, x::PGIntegers) where {T<:Integer} = Ref{T}(x)
+pgarray(::Type{T}, x::PGMarker) where {T<:Integer} = Ref{T}(x)
 pgarray(::Type{T}, x::Real) where {T<:AbstractFloat} = Ref{T}(x)
 pgarray(::Type{T}, x::PGArray{T,N}) where {T<:Integer,N} = x
 pgarray(::Type{T}, x::PGArray{T,N}) where {T<:AbstractFloat,N} = x
-pgarray(::Type{T}, x::AbstractArray{<:PGIntegers,N}) where {T<:Integer,N} =
+pgarray(::Type{T}, x::AbstractArray{<:PGMarker,N}) where {T<:Integer,N} =
     convert(Array{T,N}, x)
 pgarray(::Type{T}, x::AbstractArray{<:Real,N}) where {T<:AbstractFloat,N} =
     convert(Array{T,N}, x)
@@ -2548,16 +2548,16 @@ point (see PGPT).  The first symbol is re-used for all `i`-th data such that `i
 ≥ length(sym)`.
 
 """
-pgpnts(x::Real, y::Real, sym::PGIntegers) = pgpt(x, y, sym)
+pgpnts(x::Real, y::Real, sym::PGMarker) = pgpt(x, y, sym)
 
 function pgpnts(x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
-                sym::PGIntegers)
+                sym::PGMarker)
     @check_vectors n x y
     _cpgpnts(n, pgfltarr(x), pgfltarr(y), Ref{PGInt}(sym), 1)
 end
 
 function pgpnts(x::AbstractVector{<:Real}, y::AbstractVector{<:Real},
-                sym::AbstractVector{<:PGIntegers})
+                sym::AbstractVector{<:PGMarker})
     @check_vectors n x y
     (ns = length(sym)) ≥ 1 ||
         throw(DimensionMismatch("`sym` must have at least one element"))

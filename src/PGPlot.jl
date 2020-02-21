@@ -3,14 +3,14 @@ module PGPlot
 export
     Figure,
     colorbar,
+    curve!,
+    curve,
     figure,
     heatmap!,
     heatmap,
     hist!,
     hist,
     palette,
-    plot!,
-    plot,
     scatter!,
     scatter
 
