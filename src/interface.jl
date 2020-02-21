@@ -20,7 +20,7 @@ export
     scatter!,
     scatter
 
-using ArrayTools, TwoDimensional
+using Colors, ArrayTools, TwoDimensional
 using ..PGPlot.Bindings
 using ..PGPlot.Colormaps
 using .Bindings: pgarray, DEFAULT_XFORM
@@ -38,7 +38,7 @@ number(fig::Figure) = fig.num
 
 const ExtentOption = Union{Nothing,NTuple{4,<:Union{Nothing,Real}}}
 const AxisStyleOption = Union{Nothing,Symbol,Integer}
-const ColorOption = Union{Nothing,AbstractString,Symbol,Integer}
+const ColorOption = Union{Nothing,AbstractString,Symbol,Integer,Colorant,RGBVec}
 const FontOption = Union{Nothing,AbstractString,Symbol,Integer}
 const LabelOption = Union{Nothing,AbstractString,Symbol}
 const XFormOption = Union{Nothing, AffineTransform,NTuple{6,Real},
@@ -46,125 +46,14 @@ const XFormOption = Union{Nothing, AffineTransform,NTuple{6,Real},
 const HeightOption = Union{Nothing,Real}
 const FigureOption = Union{Nothing,Figure,Integer}
 
-#=
-PGQCI -- inquire color index
-PGQCIR -- inquire color index range
-PGQCOL -- inquire color capability
-PGQCR -- inquire color representation
-PGQTBG -- inquire text background color index
-PGSCI -- set color index
-PGSCIR -- set color index range
-PGSCR -- set color representation
-PGSCRN -- set color representation by name
-PGSHLS -- set color representation using HLS system
-PGSTBG -- set text background color index
+# Color index to use for color set by value/name.
+const USER_COLOR_INDEX = PGInt(9)
 
-PGETXT -- erase text from graphics display
-PGMTXT -- write text at position relative to viewport
-PGPTXT -- write text at arbitrary position and angle
-PGQTXT -- find bounding box of text string
-PGTEXT -- write text (horizontal, left-justified)
-
-Character height:
-PGQCH -- inquire character height
-PGQCS -- inquire character height in a variety of units
-PGSCH -- set character height
-
-Text font:
-PGQCF -- inquire character font
-PGSCF -- set character font
-=#
-
-#=
-Set the Character Font for subsequent text plotting. Four different
-fonts are available:
-  1: (default) a simple single-stroke font ("normal" font)
-  2: roman font
-  3: italic font
-  4: script font
-This call determines which font is in effect at the beginning of
-each text string. The font can be changed (temporarily) within a text
-string by using the escape sequences \fn, \fr, \fi, and \fs for fonts
-1, 2, 3, and 4, respectively.
-=#
+# Constants for available fonts.
 const NORMAL_FONT = PGInt(1)
 const ROMAN_FONT  = PGInt(2)
 const ITALIC_FONT = PGInt(3)
 const SCRIPT_FONT = PGInt(4)
-
-function rgb_color(col::UInt32)
-    mask = 0x000000FF
-    mult = 1/PGFloat(255)
-    return (((col >> 16) & mask)*mult,
-            ((col >>  8) & mask)*mult,
-            ( col        & mask)*mult)
-end
-
-const ALT_RED      = rgb_color(0x00c5000b)
-const ALT_GREEN    = rgb_color(0x00579d1c)
-const ALT_BLUE     = rgb_color(0x000084d1)
-const LIGHT_BLUE   = rgb_color(0x0083caff)
-const ALT_VIOLET   = rgb_color(0x004b1f6f)
-const DARK_BLUE    = rgb_color(0x00004586)
-const ALT_ORANGE   = rgb_color(0x00ff420e)
-const ALT_YELLOW   = rgb_color(0x00ffd320)
-const DARK_VIOLET  = rgb_color(0x007e0021)
-const DARK_GREEN   = rgb_color(0x00314004)
-const LIGHT_GREEN  = rgb_color(0x00aecf00)
-const GOLDEN       = rgb_color(0x00ff950e)
-
-const BLACK        = rgb_color(0x00000000)
-const WHITE        = rgb_color(0x00ffffff)
-const RED          = rgb_color(0x00ff0000)
-const GREEN        = rgb_color(0x0000ff00)
-const BLUE         = rgb_color(0x000000ff)
-const CYAN         = rgb_color(0x0000ffff)
-const MAGENTA      = rgb_color(0x00ff00ff)
-const YELLOW       = rgb_color(0x00ffff00)
-const ORANGE       = rgb_color(0x00ff8000)
-const YELLOW_GREEN = rgb_color(0x0080ff00)
-const BLUE_GREEN   = rgb_color(0x0000ff80)
-const DEEP_SKY     = rgb_color(0x000080ff)
-const BLUE_VIOLET  = rgb_color(0x008000ff)
-const DEEP_PINK    = rgb_color(0x00ff0080)
-const DARK_GRAY    = rgb_color(0x00555555)
-const LIGHT_GRAY   = rgb_color(0x00aaaaaa)
-
-function set_cmap0(dark::Bool = true)
-    if dark
-        pgscr( 0, BLACK...)
-        pgscr( 1, WHITE...)
-        pgscr( 2, RED...)
-        pgscr( 3, GREEN...)
-        pgscr( 4, BLUE...)
-        pgscr( 5, CYAN...)
-        pgscr( 6, MAGENTA...)
-        pgscr( 7, YELLOW...)
-        pgscr( 8, ORANGE...)
-        pgscr( 9, YELLOW_GREEN...)
-        pgscr(10, BLUE_GREEN...)
-        pgscr(11, DEEP_SKY...)
-        pgscr(12, BLUE_VIOLET...)
-        pgscr(13, DEEP_PINK...)
-    else
-        pgscr( 0, WHITE...)
-        pgscr( 1, BLACK...)
-        pgscr( 2, ALT_RED...)
-        pgscr( 3, ALT_GREEN...)
-        pgscr( 4, ALT_BLUE...)
-        pgscr( 5, LIGHT_BLUE...)
-        pgscr( 6, MAGENTA...)
-        pgscr( 7, ALT_YELLOW...)
-        pgscr( 8, ALT_ORANGE...)
-        pgscr( 9, GOLDEN...)
-        pgscr(10, BLUE_GREEN...)
-        pgscr(11, DEEP_SKY...)
-        pgscr(12, BLUE_VIOLET...)
-        pgscr(13, DEEP_PINK...)
-    end
-    pgscr(14, DARK_GRAY...)
-    pgscr(15, LIGHT_GRAY...)
-end
 
 # Transparent text background color.
 const TRANSPARENT_BACKGROUND = PGInt(-1)
@@ -344,8 +233,8 @@ function open_device(name::AbstractString)
     dev > 0 || throw_open_device_failure(name)
     pgask(false) # do not wait for user input
     if pgqinf("HARDCOPY") == "YES"
-        pgscr(0, 0,0,0) # set background color to white
-        pgscr(1, 1,1,1) # set foreground color to black
+        pgscr(0, 1,1,1) # set background color to white
+        pgscr(1, 0,0,0) # set foreground color to black
     else
         pgscr(0, 0,0,0) # set background color to black
         pgscr(1, 1,1,1) # set foreground color to white
@@ -385,12 +274,6 @@ function forget_device(dev::Integer)
     end
     nothing
 end
-
-get_color(ci::Integer) = PGInt(ci)
-get_color(::Nothing) = FOREGROUND_COLOR_INDEX
-get_color(ci::Integer, def::Integer) = get_color(ci)
-get_color(::Nothing, def::Integer) = get_color(def)
-
 
 function plot(x::AbstractVector, y::AbstractVector;
               fig::FigureOption = nothing,
@@ -762,10 +645,27 @@ get_axis_style(val::Symbol) =
 @noinline throw_bad_axis_style(val) =
     throw(ArgumentError(string("invalid axis style: ", val)))
 
+get_color(::Nothing) = FOREGROUND_COLOR_INDEX
+get_color(val, def) = get_color(val)
+get_color(::Nothing, def) = get_color(def)
+get_color(ci::Integer) = PGInt(ci)
+get_color(val::UInt32) = get_color(RGB24(val))
+get_color(val::Symbol) = get_color(String(val))
+get_color(val::AbstractString) = get_color(parse(RGB{PGFloat}, val))
+get_color(val::RGBVec) = get_color(convert(RGB{PGFloat}, val))
+function get_color(val::Colorant)
+    pgscr(USER_COLOR_INDEX, val)
+    return USER_COLOR_INDEX
+end
+
 get_text_height(val::Real) =
     (@assert isfinite(val) && val > 0; PGFloat(val))
 
-get_font(val::AbstractString) = get_text_font(Symbol(val))
+get_font(val::AbstractString) =
+  (val == "normal" ? NORMAL_FONT :
+   val == "roman"  ? ROMAN_FONT  :
+   val == "italic" ? ITALIC_FONT :
+   val == "script" ? SCRIPT_FONT : throw_bad_text_font(val))
 get_font(val::Symbol) =
   (val == :normal ? NORMAL_FONT :
    val == :roman  ? ROMAN_FONT  :

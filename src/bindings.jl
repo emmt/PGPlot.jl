@@ -151,19 +151,22 @@ export
     pgwedg,
     pgwnad
 
-using ArrayTools
+using Colors, ArrayTools
 
 isfile(joinpath(@__DIR__, "..", "deps", "deps.jl")) ||
     error("PGPlot not properly installed.  Please run Pkg.build(\"PGPlot\")")
 include(joinpath("..", "deps", "deps.jl"))
 
-# Basic types used by PGPlot library.  These definitions are to make changes easy.
+# Basic types used by PGPlot library.  These definitions are to make changes
+# easy.
 const PGBool     = Cint
 const PGInt      = Cint
 const PGFloat    = Cfloat
 const PGChar     = Cchar
 const PGString   = Cstring
-const PGIntegers = Union{Integer,Char} # used for symbols, can be converted to PGInt
+
+# PGIntegers are used for symbols, can be converted to PGInt.
+const PGIntegers = Union{Integer,Char}
 
 # Arrays passed to PGPlot must have contiguous elements in colum-major order.
 const PGArray{T,N}  = DenseArray{T,N}
@@ -3412,11 +3415,41 @@ nearest available color is used.  Examples: for black, set `cr=cg=cb=0.0`; for
 white, set `cr=cg=cb=1.0`; for medium gray, set `cr=cg=cb=0.5`; for medium
 yellow, set `cr=cg=0.5`, `cb=0.0`.
 
+Color can also be specified as a single argument:
+
+```julia
+pgscr(ci, clr)
+```
+
+where `clr` is an instance of `Colorant` (provided by the `ColorTypes` package)
+or a color name (all names known by the `Colors` package are available).
+Examples:
+
+```julia
+pgscr(ci, "plum")
+
+using Colors
+pgscr(ci, colorant"MediumBlue")
+pgscr(ci, HSL(270, 0.5, 0.5))
+pgscr(ci, RGB(11/255,30/255,45/255))
+pgscr(ci, RGB24(0x0000bfff))
+
+```
+
 """
 pgscr(ci::Integer, cr::Real, cg::Real, cb::Real) =
     ccall((:cpgscr, pgplotlib), Cvoid,
           (PGInt, PGFloat, PGFloat, PGFloat),
           ci, cr, cg, cb)
+
+pgscr(ci::Integer, color::RGB{T}) where {T<:AbstractFloat} =
+    pgscr(ci, color.r, color.g, color.b)
+
+pgscr(ci::Integer, color::Colorant) =
+    pgscr(ci, convert(RGB{PGFloat}, color))
+
+pgscr(ci::Integer, color::AbstractString) =
+    pgscr(ci, parse(RGB{PGFloat}, color))
 
 """
 
