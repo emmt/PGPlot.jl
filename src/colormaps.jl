@@ -51,8 +51,8 @@ function RGBVec{UInt8}(col::RGBVec{T}) where {T<:AbstractFloat}
                      round(UInt8, a*clamp(col.b, zero(T), one(T))))
 end
 
-RGBVec{T}(rgb::Tuple{Real,Real,Real}) where {T} = RGB{T}(rgb...)
-RGBVec(rgb::Tuple{Real,Real,Real}) = RGB(rgb...)
+RGBVec{T}(rgb::NTuple{3,Real}) where {T} = RGB{T}(rgb...)
+RGBVec(rgb::NTuple{3,Real}) = RGB(rgb...)
 
 RGBVec{T}(col::Colorant) where {T} = RGBVec{T}(RGB(col))
 RGBVec(col::Colorant) = RGBVec(RGB(col))
@@ -66,11 +66,10 @@ RGBVec(col::Symbol) = RGBVec(String(col))
 RGBVec{T}(col::AbstractString) where {T} = RGBVec{T}(parse(RGB, col))
 RGBVec(col::AbstractString) = RGBVec(parse(RGB, col))
 
-Base.convert(::Type{T}, arg) where {T<:RGBVec} = T(arg)
-Base.convert(::Type{T}, col::RGBVec{<:AbstractFloat}) where {T<:RGB} =
-    (rgb = clamp(col); T(rgb.r, rgb.g, rgb.b))
-Base.convert(::Type{T}, col::RGBVec{S}) where {T<:RGB,S<:Real} =
-    T(REGVec{float(S)}(col))
+Base.convert(::Type{T}, arg::T) where {T<:RGBVec} = arg
+Base.convert(::Type{T}, arg::Colorant) where {T<:RGBVec} = T(arg)
+Base.convert(::Type{T}, arg::NTuple{3,Real}) where {T<:RGBVec} = T(arg)
+Base.convert(::Type{T}, arg::RGBVec) where {T<:RGB} = T(arg)
 
 black(::Type{RGBVec{T}}) where {T} = RGBVec{T}(zero(T), zero(T), zero(T))
 white(::Type{RGBVec{T}}) where {T<:AbstractFloat} =
@@ -109,8 +108,8 @@ Base.:( \ )(α::Real, col::RGBVec) = col/α
 Base.Tuple(col::RGBVec) = (col.r, col.g, col.b)
 Base.clamp(col::RGBVec{T}) where {T<:AbstractFloat} =
     RGBVec{T}(clamp(col.r, zero(T), one(T)),
-           clamp(col.g, zero(T), one(T)),
-           clamp(col.b, zero(T), one(T)))
+              clamp(col.g, zero(T), one(T)),
+              clamp(col.b, zero(T), one(T)))
 
 function Base.tryparse(::Type{RGBVec{T}}, str::AbstractString) where {T}
     cols = split(str, ' ', keepempty=false)
