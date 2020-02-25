@@ -2500,14 +2500,47 @@ pgpap(width::Real, aspect::Real) = ccall((:cpgpap, pgplotlib), Cvoid,
 """
 
 ```julia
-pgpixl(A, [i1, i2, j1, j2,], x1=i1-0.5, x2=i2+0.5, y1, y2)
+pgpixl(A, [[i1, i2, j1, j2,], [x1=i1-0.5, x2=i2+0.5, y1=j1-0.5, y2=j2+0.5]])
 ```
 
+Draw lots of solid-filled (tiny) rectangles aligned with the coordinate axes.
+Best performance is achieved when output is directed to a pixel-oriented device
+and the rectangles coincide with the pixels on the device.  In other cases,
+pixel output is emulated.
+
+The subsection of the array `A` defined by indices `(i1:i2, j1:j2)` is mapped
+onto world-coordinate rectangle defined by `x1`, `x2`, `y1` and `y2`.  This
+rectangle is divided into `(i2 - i1 + 1)×(j2 - j1 + 1)` small rectangles.  Each
+of these small rectangles is solid-filled with the color index specified by the
+corresponding element of `A`.
+
+On most devices, the output region is *opaque*, i.e., it obscures all graphical
+elements previously drawn in the region.  But on devices that do not have erase
+capability, the background shade is *transparent* and allows previously-drawn
+graphics to show through.
+
+The sub-array to consider can be specified by index ranges `I = i1:i2` and
+`J = j1:j2`.  If no sub-array indices are specified, the whole array is
+plotted.
+
 """
+pgpixl(A::AbstractMatrix{<:Integer}) = pgpixl(A, axes(A)...)
 
 function pgpixl(A::AbstractMatrix{<:Integer},
                 x1::Real, x2::Real, y1::Real, y2::Real)
     _pgpixl(submatrix(PGInt, A)..., x1, x2, y1, y2)
+end
+
+function pgpixl(A::AbstractMatrix{<:Integer},
+                I::AbstractRange{<:Integer},
+                J::AbstractRange{<:Integer})
+    dx = PGFloat(step(I))/PGFloat(2)
+    x1 = PGFloat(first(I)) - dx
+    x2 = PGFloat(last(I)) + dx
+    dy = PGFloat(step(J))/PGFloat(2)
+    y1 = PGFloat(first(J)) - dy
+    y2 = PGFloat(last(J)) + dy
+    pgpixl(A, I, J, x1, x2, y1, y2)
 end
 
 function pgpixl(A::AbstractMatrix{<:Integer},
