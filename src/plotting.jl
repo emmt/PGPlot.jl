@@ -24,7 +24,7 @@ export
 using Colors, ArrayTools, TwoDimensional
 using ..PGPlot.Bindings
 using ..PGPlot.Colormaps
-using .Bindings: pgarray, DEFAULT_XFORM
+using .Bindings: pgarray, DEFAULT_XFORM, get_own_xform, throw_bad_xform_size
 
 # FIXME: type piracy
 Base.Tuple(A::AffineTransform) = (A.x, A.xx, A.xy, A.y, A.yx, A.yy)
@@ -42,7 +42,7 @@ const AxisStyleOption = Union{Nothing,Symbol,Integer}
 const ColorOption = Union{Nothing,AbstractString,Symbol,Integer,Colorant,RGBVec}
 const FontOption = Union{Nothing,AbstractString,Symbol,Integer}
 const LabelOption = Union{Nothing,AbstractString,Symbol}
-const XFormOption = Union{Nothing, AffineTransform,NTuple{6,Real},
+const XFormOption = Union{Nothing,AffineTransform,NTuple{6,Real},
                           AbstractVector{<:Real},AbstractMatrix{<:Real}}
 const HeightOption = Union{Nothing,Real}
 const FigureOption = Union{Nothing,Figure,Integer}
@@ -71,13 +71,66 @@ const DEFAULT_TEXT_COLOR = DEFAULT_DRAWING_COLOR # for annotations
 const DEFAULT_TEXT_FONT = NORMAL_FONT
 const DEFAULT_TEXT_HEIGHT = PGFloat(1.0)
 
-function check(A::AbstractArray)
+"""
+
+`Box{T}` represents a rectangular region whose side are aligned with the
+coordinate axes.
+
+"""
+struct Box{T<:Real}
+    x1::T
+    x2::T
+    y1::T
+    y2::T
+end
+
+Box(A::NTuple{4,Real}) = Box(A[1], A[2], A[3], A[4])
+Box(x1, x2, y1, y2) = Box(promote(x1, x2, y1, y2)...)
+Box(B::Box) = B
+Box{T}(B::Box{T}) where {T<:Real} = B
+Box{T}(B::Box) where {T<:Real} = Box{T}(B.x1, B.x2, B.y1, B.y2)
+Base.Tuple(B::Box) = (B.x1, B.x2, B.y1, B.y2)
+
+const BAD_COLOR = colorant"orange"
+
+abstract type AbstractScaling{T<:Integer} end
+
+struct LinearScaling{T} <: AbstractScaling{T}
+    lo::T   # first color index
+    hi::T   # last color index
+    bad::T  # color index for bad values
+end
+
+Base.first(scl::AbstractScaling) = scl.lo
+Base.last(scl::AbstractScaling) = scl.hi
+bad(scl::AbstractScaling) = scl.bad
+
+LinearScaling(lo::Integer, hi::Integer) =
+    LinearScaling(lo, hi, get_color(BAD_COLOR))
+
+LinearScaling{T}(lo::Integer, hi::Integer) where {T<:Integer} =
+    LinearScaling{T}(lo, hi, get_color(BAD_COLOR))
+
+LinearScaling(; badcolor::ColorOption = BAD_COLOR) =
+    LinearScaling{PGInt}(pgqcir()..., get_color(badcolor))
+
+(scl::LinearScaling)(A::AbstractArray, vmin, vmax) =
+    rescale(scl, A, vmin, vmax)
+
+
+have_bad_values(A::AbstractArray{<:Integer}) = false
+
+function have_bad_values(A::AbstractArray{<:Real})
     flag = true
     @inbounds @simd for i in eachindex(A)
         flag &= isfinite(A[i])
     end
-    flag || throw(ArgumentError("non-finite value(s) in argument"))
+    return !flag
 end
+
+check(A::AbstractArray) =
+    (have_bad_values(A)
+     && throw(ArgumentError("non-finite value(s) in argument")))
 
 function check(x::AbstractVector, y::AbstractVector)
     length(x) == length(y) ||
@@ -85,6 +138,17 @@ function check(x::AbstractVector, y::AbstractVector)
     check(x)
     check(y)
 end
+
+"""
+
+```julia
+twice(x) -> (x, x)
+```
+
+yeilds a 2-tuple with the same value repeated twice.
+
+"""
+twice(x) = (x, x)
 
 """
 
@@ -282,13 +346,110 @@ end
 """
 
 ```julia
-frame(...)
+newpage()
+```
+
+starts a new page with the standard viewport.  It is possible to specify
+the viewport bounds in normalized device coordinate units (NDC):
+
+```julia
+newpage(B::Box)
+newpage(x1, x2, y1, y2)
+```
+
+"""
+newpage() = (pgpage(); setviewport())
+newpage(B::Box) = (pgpage(); setviewport(B))
+newpage(x1::Real, x2::Real, y1::Real, y2::Real) =
+    (pgpage(); setviewport(x1, x2, y1, y2))
+
+"""
+
+```julia
+getviewport(units=0) -> x1, x2, y1, y2
+```
+
+yields the viewport limits in requested units, normalized device coordinate
+units (NDC) by default.  To retrieve the viewport as a box:
+
+```julia
+getviewport(Box{T}, units=0) -> box
+```
+
+"""
+getviewport(units::Integer=0) = pgqvp(units)
+getviewport(::Type{T}, units::Integer=0) where {T<:Box} = T(getviewport(units))
+
+"""
+
+```julia
+setviewport()
+```
+
+sets the standard viewport.  It is possible to specify the viewport
+bounds in normalized device coordinate units (NDC):
+
+```julia
+setviewport(B::Box)
+setviewport(x1, x2, y1, y2)
+```
+
+"""
+setviewport() = pgvstd()
+setviewport(B::Box) = setviewport(B.x1, B.x2, B.y1, B.y2)
+setviewport(x1::Real, x2::Real, y1::Real, y2::Real) =
+    pgsvp(x1, x2, y1, y2)
+
+"""
+
+```julia
+getworld() -> x1, x2, y1, y2
+```
+
+yields the current world coordinate limits.  To retrieve these limits as a
+box:
+
+```julia
+getworld(Box{T}) -> box
+```
+
+"""
+getworld() = Box(pgqwin()...)
+getworld(::Type{T}) where {T<:Box} = T(getworld())
+
+"""
+
+```julia
+setworld(B::Box, just=false)
+setworld(x1, x2, y1, y2, just=false)
+```
+
+both set the world coordinate limits.  If `just` is true, the viewport is
+adjusted so that both axes have the same scaling.
+
+"""
+setworld(B::Box, just::Bool=false) = setworld(B.x1, B.x2, B.y1, B.y2, just)
+setworld(x1::Real, x2::Real, y1::Real, y2::Real, just::Bool=false) =
+    (just ? pgwnad(x1, x2, y1, y2) : pgswin(x1, x2, y1, y2))
+
+
+"""
+
+```julia
+frame(..., adv=false)
 ```
 
 draws the environment of subsequent plots.
 
+If `adv` is true, the graphic page is erased and a new page is created
+befroe drawing the frame.
+
 """
-function frame(xmin::Real, xmax::Real, ymin::Real, ymax::Real;
+frame(B::Box, adv::Bool = false; kwds...) =
+    frame(B.x1, B.x2, B.y1, B.y2, adv; kwds...)
+
+function frame(x1::Real, x2::Real, y1::Real, y2::Real,
+               adv::Bool = false;
                fig::FigureOption = nothing,
                wait::Bool = false,
                just::Bool = false,
@@ -298,9 +459,14 @@ function frame(xmin::Real, xmax::Real, ymin::Real, ymax::Real;
                title::LabelOption = nothing,
                textcolor::ColorOption = nothing,
                framecolor::ColorOption = nothing)
+
+    xopts, yopts = get_axes_style(style)
     select_figure(fig)
     pgsci(get_color(framecolor, DEFAULT_FRAME_COLOR))
-    pgenv(xmin, xmax, ymin, ymax, just, get_axis_style(style))
+    adv && newpage()
+    setworld(x1, x2, y1, y2, just)
+    pgbox(xopts, 0.0, 0, yopts, 0.0, 0)
+    #pgenv(x1, x2, y1, y2, just, get_axis_style(style))
     if xlabel !== nothing || ylabel !== nothing || title !== nothing
         # deal with colors, size, text style
         pgsci(get_color(textcolor, DEFAULT_TITLE_COLOR))
@@ -308,14 +474,27 @@ function frame(xmin::Real, xmax::Real, ymin::Real, ymax::Real;
     end
 end
 
-function frame(x::AbstractVector, y::AbstractVector;
+function frame(x::AbstractVector, y::AbstractVector, adv::Bool = false;
                extent::ExtentOption = nothing,
                kwds...)
     check(x, y)
-    xmin, xmax = get_vrange(PGFloat, x, extent, (1,2))
-    ymin, ymax = get_vrange(PGFloat, y, extent, (3,4))
-    frame(xmin, xmax, ymin, ymax; kwds...)
+    x1, x2 = get_vrange(PGFloat, x, extent, (1,2))
+    y1, y2 = get_vrange(PGFloat, y, extent, (3,4))
+    frame(x1, x2, y1, y2, adv; kwds...)
 end
+
+get_axes_style(opt) = get_axes_style(get_axis_style(opt))
+
+get_axes_style(opt::Integer) =
+    (opt == -2 ? twice(" ") :
+     opt == -1 ? twice("BC") :
+     opt ==  0 ? twice("BCNST") :
+     opt ==  1 ? twice("ABCNST") :
+     opt ==  2 ? twice("ABCGNST") :
+     opt == 10 ? ("BCNSTL", "BCNST") :
+     opt == 20 ? ("BCNST",  "BCNSTL") :
+     opt == 30 ? ("BCNSTL", "BCNSTL") :
+     throw(ArgumentError("illegal AXIS argument")))
 
 """
 
@@ -348,7 +527,7 @@ Other keywods are transmitted to [`frame`](@ref) used to draw the frame box
 function curve(x::AbstractVector, y::AbstractVector;
               color::ColorOption = nothing,
               kwds...)
-    frame(x, y; kwds...)
+    frame(x, y, true; kwds...)
     _curve(x, y, color)
 end
 
@@ -395,7 +574,7 @@ function hist(x::AbstractVector, y::AbstractVector;
               center::Bool = true,
               color::ColorOption = nothing,
               kwds...)
-    frame(x, y; kwds...)
+    frame(x, y, true; kwds...)
     _hist(x, y, center, color)
 end
 
@@ -427,7 +606,7 @@ function scatter(x::AbstractVector, y::AbstractVector,
                  sym::Markers;
                  color::ColorOption = nothing,
                  kwds...)
-    frame(x, y; kwds...)
+    frame(x, y, true; kwds...)
     _scatter(x, y, sym, color)
 end
 
@@ -488,19 +667,23 @@ end
 """
 
 ```julia
-heatmap(A, tr=[0,1,0, 0,0,1]; kwds...)
+heatmap(A; kwds...)
 ```
 
-draws a *heat-map* , that is a map whose cells have pseudo-colors computed from
-the values in the 2-dimensional array `A`.  By default, the first and second
-dimensions of `A` are assumed to correspond to the abscissa and oridinate axes
-respectively.
+draws a *heat-map*, that is a map whose cells have pseudo-colors computed
+from the values in the 2-dimensional array `A`.  By default, the first and
+second dimensions of `A` are assumed to correspond to the abscissa and
+ordinate axes respectively and the world coordinates are assumed equal to
+the indices of `A` (see below for other possibilities).
 
 Keywords (other keywords are passed to [`frame`](@ref)):
 
 - `vmin` and `vmax` specify the range of values to consider.  It is possible to
   have `vmin > vmax` to reverse the order of the colors.  If unspecified, the
   extreme values of `A` are considered.
+
+- `badcolor` is the color to attribute to bad values (like NaN, *not-a-number*)
+  in `A`.
 
 - `cbar` specifies where to put a color-bar: `cbar = 'L'` `'R'`, `'T'` or `'B'`
   to draw a color-bar on the Left, Right, Top or Bottom side of the frame;
@@ -515,45 +698,125 @@ Keywords (other keywords are passed to [`frame`](@ref)):
 
 To add another heat-map to an existing plot, call [`heatmap!`](@ref) instead.
 
-"""
-function heatmap(A::AbstractMatrix{<:Real},
-                 xform::XFormOption = DEFAULT_XFORM;
-                 kwds...)
-    heatmap(pgarray(PGFloat, A), get_xform(xform); kwds...)
-end
+To change the default coordiante mapping, the world coordinates `x1`, `x2`,
+`y1` and `y2` of the corners of the rectangular region covered by `A` may
+be specified:
 
-# @btime Plotting.heatmap($z) for a 81×81 image
-#   8.112 ms (2 allocations: 25.77 KiB)
-function heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
-                 vmin::Union{Nothing,Real} = nothing,
-                 vmax::Union{Nothing,Real} = nothing,
+```julia
+heatmap(A, x1, x2, y1, y2; kwds...)
+```
+
+The rectangular region covered by `A` has its edges aligned with the world
+coordinate axes.  To draw a heat-map of `A` in a region of a different
+shape, call:
+
+```julia
+heatmap(A, tr; kwds...)
+```
+
+with `tr` an affine coordinate transform to map index `(i,j)` to world
+coordinates `(x,y)` as follows:
+
+```
+x = tr[1] + tr[2]*i + tr[3]*j
+y = tr[4] + tr[5]*i + tr[6]*j
+```
+
+The coordinate transform `tr` is a 6-element vector or a 2×3 matrix.  Hence
+identity is given by: `tr = [0,1,0, 0,0,1]`.
+
+"""
+function heatmap(A::AbstractMatrix{T}, args...;
+                 fig::FigureOption = nothing,
+                 just::Bool = true,
                  cbar::Union{Nothing,Char} = 'R',
                  zlabel::AbstractString = "",
                  cmap::Union{Nothing,AbstractString} = nothing,
-                 just::Bool = true,
-                 kwds...)
-    # Get range of values to plot.
-    check(A)
-    bg, fg = get_zrange(A, vmin, vmax)
+                 vmin::Union{Nothing,Real} = nothing,
+                 vmax::Union{Nothing,Real} = nothing,
+                 badcolor::ColorOption = nothing,
+                 kwds...) where {T<:AbstractFloat}
+    # Get size of region covered by the map.
+    box = get_extent(Box{PGFloat}, A, args...)
 
-    # Get maximal extent of coordinates.
-    I, J = axes(A)
-    xmin, xmax, ymin, ymax = get_extent(PGFloat, I, J, tr)
+    # Select figure, advance page, set default viewport and set world.
+    select_figure(fig)
+    newpage()
+    setworld(box, just)
 
-    # Draw viewport.
-    frame(xmin, xmax, ymin, ymax; just = just, kwds...)
+    # Select colormap.
+    cmap === nothing || palette(cmap)
 
     # Draw map.
-    if cmap !== nothing
-        palette(cmap)
-    end
-    pgimag(A, I, J, bg, fg, tr)
+    _heatmap(A, args...; vmin=vmin, vmax=vmax, badcolor=badcolor)
 
-    # Optional color bar.
-    if cbar !== nothing
-        colorbar(bg, fg; side = cbar, label = zlabel)
+    # Draw the frame.
+    frame(box, false; just = just, kwds...)
+
+    # Draw optional color bar.
+    cbar === nothing || colorbar(; side = cbar, label = zlabel)
+end
+
+function _heatmap(A::AbstractMatrix{<:Real}; kwds...)
+    _heatmap(pgarray(PGFloat, A), DEFAULT_XFORM; kwds...)
+end
+
+function _heatmap(A::AbstractMatrix{<:Real},
+                  tr::AbstractArray{<:Real}; kwds...)
+    _heatmap(pgarray(PGFloat, A), get_own_xform(tr); kwds...)
+end
+
+function _heatmap(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
+                  vmin::Union{Nothing,Real} = nothing,
+                  vmax::Union{Nothing,Real} = nothing,
+                  badcolor::ColorOption = nothing)
+    bad, lo, hi = rangeofvalues(PGFloat, A, vmin, vmax)
+    bad && error("cannot plot image with bad value, call with (x1,x2,y1,y2)")
+    memorize_zrange(lo, hi)
+    pgimag(A, lo, hi, tr)
+end
+
+function _heatmap(A::AbstractMatrix{<:Real},
+                  x1::Real, x2::Real, y1::Real, y2::Real; kwds...)
+    _heatmap(A, PGFloat(x1), PGFloat(x2), PGFloat(y1), PGFloat(y2); kwds...)
+end
+
+function _heatmap(A::AbstractMatrix{<:Integer},
+                  x1::PGFloat, x2::PGFloat, y1::PGFloat, y2::PGFloat;
+                  vmin::Union{Nothing,Real} = nothing,
+                  vmax::Union{Nothing,Real} = nothing,
+                  badcolor::ColorOption = BAD_COLOR)
+    x1, x2 = adjust_interval(x1, x2)
+    y1, y2 = adjust_interval(y1, y2)
+    # FIXME: `pgpixl` is much slower than `pgimag` so avoid calling `pgpixl`.
+    tr = simple_xform!(get_own_xform(), A, x1, x2, y1, y2)
+    bad, lo, hi = rangeofvalues(PGFloat, A, vmin, vmax)
+    memorize_zrange(lo, hi)
+    @assert bad == false
+    pgimag(A, lo, hi, tr)
+end
+
+function _heatmap(A::AbstractMatrix{<:AbstractFloat},
+                  x1::PGFloat, x2::PGFloat, y1::PGFloat, y2::PGFloat;
+                  vmin::Union{Nothing,Real} = nothing,
+                  vmax::Union{Nothing,Real} = nothing,
+                  badcolor::ColorOption = BAD_COLOR)
+    x1, x2 = adjust_interval(x1, x2)
+    y1, y2 = adjust_interval(y1, y2)
+    select_figure(fig)
+    # FIXME: `pgpixl` is much slower than `pgimag` so only call `pgpixl` if
+    #        there are bad values.
+    bad, lo, hi = rangeofvalues(eltype(A), A, vmin, vmax)
+    memorize_zrange(lo, hi)
+    if bad
+        scaling = LinearScaling(badcolor=badcolor)
+        pgpixl(rescale(scaling, A, lo, hi), x1, x2, y1, y2)
+    else
+        tr = simple_xform!(get_own_xform(), A, x1, x2, y1, y2)
+        pgimag(A, lo, hi, tr)
     end
 end
+
 
 """
 
@@ -566,25 +829,29 @@ Arguments are the same as for [`heatmap`](@ref).  The only supported keywords
 are `vmin`, `vmax` and `fig`.
 
 """
-function heatmap!(A::AbstractMatrix{<:Real},
-                  xform::XFormOption = DEFAULT_XFORM;
-                  kwds...)
-    heatmap!(pgarray(PGFloat, A), pgarray(PGFloat, xform); kwds...)
-end
-
-function heatmap!(A::DenseMatrix{PGFloat}, tr::DenseArray{PGFloat};
-                  fig::FigureOption = nothing,
-                  vmin::Union{Nothing,Real} = nothing,
-                  vmax::Union{Nothing,Real} = nothing)
+function heatmap!(A::AbstractMatrix{<:Real}, args...;
+                  fig::FigureOption = nothing, kwds...)
     select_figure(fig)
-    check(A)
-    bg, fg = get_zrange(A, vmin, vmax)
-    pgimag(A, bg, fg, tr)
+    _heatmap(A, args...; kwds...)
 end
 
 # The following are to remember image settings for the color-bar.
 const last_bg = Ref{PGFloat}(0)
 const last_fg = Ref{PGFloat}(1)
+
+memorize_zrange(bg::Real, fg::Real) =
+    memorize_zrange(PGFloat(bg), PGFloat(fg))
+
+function memorize_zrange(bg::PGFloat, fg::PGFloat)
+    if bg == fg
+        # Quick fix.
+        bg -= tiny(bg)
+        fg += tiny(fg)
+    end
+    last_bg[] = bg
+    last_fg[] = fg
+    return (bg, fg)
+end
 
 # Like get_vrange but fix equal endpoints and remember values
 # for the color-bar.
@@ -603,6 +870,9 @@ end
 tiny(val::AbstractFloat) =
     (del = oftype(val, 0.001);
      val == zero(val) ? del : abs(val)*del)
+
+adjust_interval(x1, x2) =
+    (x1 == x2 ? (x1 - tiny(x1), x2 + tiny(x2)) : (x1, x2))
 
 """
 
@@ -773,68 +1043,239 @@ get_xform(A::NTuple{6,Real}) = PGFloat[A...]
 get_xform(A::AbstractVector) = (@assert size(A) == (6,); pgarray(PGFloat, A))
 get_xform(A::AbstractMatrix) = (@assert size(A) == (2,3); pgarray(PGFloat, A))
 
+
 """
 
 ```julia
-get_extent(I, J, tr) -> xmin, xmax, ymin, ymax
+splat_xform(T, tr) -> Ax,Axx,Axy, Ay,Ayx,Ayy
+```
+
+converts the coordinate transform `tr` into a 6-tuple of coefficients of
+type `T`.
+
+"""
+function splat_xform(::Type{T},
+                     tr::AbstractVector{<:Real}) where {T<:AbstractFloat}
+    axes(tr,1) == 1:6 || throw_bad_xform_size()
+    return (T(tr[1]), T(tr[2]), T(tr[3]),
+            T(tr[4]), T(tr[5]), T(tr[6]))
+end
+
+function splat_xform(::Type{T},
+                     tr::AbstractMatrix{<:Real}) where {T<:AbstractFloat}
+    axes(tr) == (1:2, 1:3) || throw_bad_xform_size()
+    return (T(tr[1,1]), T(tr[1,2]), T(tr[1,3]),
+            T(tr[2,1]), T(tr[2,2]), T(tr[2,3]))
+end
+
+
+"""
+
+```julia
+get_extent(T, I, J, tr) -> x1, x2, y1, y2
 ```
 
 yields the extent of world coordinates after applying coordinates transform
-`tr` to the range of indices `I = imin:imax` and `J = jmin:jmax`.  Ranges of
-indices can be specified by their endpoints:
+`tr` to the range of indices `I = imin:imax` and `J = jmin:jmax`.  Argument
+`T` is the floating-point type of the result.  It can be replace by a
+`Box{T}` type to get the resilt as a box instead of a 4-tuplke.
+
+Ranges of indices can be specified by their endpoints:
 
 ```julia
-get_extent(i1, i2, j1, j2, tr) -> xmin, xmax, ymin, ymax
+get_extent(i1, i2, j1, j2, tr) -> x1, x2, y1, y2
 ```
 
 In this latter case, the order of `i1` and `i2 (and of `j1` and `j2`) can be
 reversed.
 
-"""
-function get_extent(i1::Integer, i2::Integer,
-                    j1::Integer, j2::Integer,
-                    tr::AbstractArray{<:Real})
-    get_extent(PGFloat, i1, i2, j1, j2, tr)
-end
+Other possibilities:
 
-function get_extent(I::AbstractUnitRange{<:Integer},
-                    J::AbstractUnitRange{<:Integer},
-                    tr::AbstractArray{<:Real})
-    get_extent(first(I), last(I), first(J), last(J), tr)
+```julia
+get_extent(T, A, tr)
+get_extent(T, I, J, tr)
+get_extent(T, i1, i2, j1, j2, tr)
+```
+
+or
+
+```julia
+get_extent(T, A, x1, x2, y1, y2)
+get_extent(T, A, box)
+```
+
+"""
+get_extent(::Type{Box{T}}, args...) where {T<:AbstractFloat} =
+    Box{T}(get_extent(T, args...)...)
+
+get_extent(::Type{T}, A::AbstractMatrix) where {T<:AbstractFloat} =
+    get_extent(T, axes(A)...)
+
+function get_extent(::Type{T},
+                    A::AbstractMatrix,
+                    B::Box) where {T<:AbstractFloat}
+    return get_extent(T, A, B.x1, B.x2, B.y1, B.y2)
 end
 
 function get_extent(::Type{T},
-                    I::AbstractUnitRange{<:Integer},
-                    J::AbstractUnitRange{<:Integer},
-                    tr::AbstractArray{<:Real}) where {T<:AbstractFloat}
-    get_extent(T, first(I), last(I), first(J), last(J), tr)
+                    A::AbstractMatrix,
+                    x1::Real, x2::Real,
+                    y1::Real, y2::Real) where {T<:AbstractFloat}
+    return get_extent(T, A, T(x1), T(x2), T(y1), T(y2))
+end
+
+function get_extent(::Type{T},
+                    A::AbstractMatrix,
+                    x1::T, x2::T,
+                    y1::T, y2::T) where {T<:AbstractFloat}
+    return (adjust_interval(x1, x2)..., adjust_interval(y1, y2)...)
+end
+
+function get_extent(::Type{T},
+                    A::AbstractMatrix,
+                    tr::AbstractArray) where {T<:AbstractFloat}
+    return get_extent(T, axes(A)..., tr)
+end
+
+function get_extent(::Type{T},
+                    i1::Integer, i2::Integer,
+                    j1::Integer, j2::Integer) where {T<:AbstractFloat}
+    return (_get_extent(T, i1, i2)..., _get_extent(T, j1, j2)...)
 end
 
 function get_extent(::Type{T},
                     i1::Integer, i2::Integer,
                     j1::Integer, j2::Integer,
                     tr::AbstractArray{<:Real}) where {T<:AbstractFloat}
-    @assert length(tr) == 6
-    tr1, tr2, tr3 = T(tr[1]), T(tr[2]), T(tr[3])
-    tr4, tr5, tr6 = T(tr[4]), T(tr[5]), T(tr[6])
-    s = T(0.5)
-    imin = min(T(i1), T(i2)) - s
-    imax = max(T(i1), T(i2)) + s
-    jmin = min(T(j1), T(j2)) - s
-    jmax = max(T(j1), T(j2)) + s
-    x1 = tr1 + tr2*imin + tr3*jmin
-    y1 = tr4 + tr5*imin + tr6*jmin
-    x2 = tr1 + tr2*imax + tr3*jmin
-    y2 = tr4 + tr5*imax + tr6*jmin
-    x3 = tr1 + tr2*imin + tr3*jmax
-    y3 = tr4 + tr5*imin + tr6*jmax
-    x4 = tr1 + tr2*imax + tr3*jmax
-    y4 = tr4 + tr5*imax + tr6*jmax
-    xmin = min(x1, x2, x3, x4)
-    xmax = max(x1, x2, x3, x4)
-    ymin = min(y1, y2, y3, y4)
-    ymax = max(y1, y2, y3, y4)
+    _get_extent(T, _get_extent(T, i1, i2)..., _get_extent(T, j1, j2)..., tr)
+end
+
+function get_extent(::Type{T},
+                    I::AbstractRange{<:Integer},
+                    J::AbstractRange{<:Integer}) where {T<:AbstractFloat}
+    return (_get_extent(T, I)..., _get_extent(T, J)...)
+end
+
+function get_extent(::Type{T},
+                    I::AbstractRange{<:Integer},
+                    J::AbstractRange{<:Integer},
+                    tr::AbstractArray{<:Real}) where {T<:AbstractFloat}
+    _get_extent(T, _get_extent(T, I)..., _get_extent(T, J)..., tr)
+end
+
+function _get_extent(::Type{T},
+                     i1::Integer, i2::Integer) where {T<:AbstractFloat}
+    s = (i1 ≤ i2 ? one(T) : -one(T))/T(2)
+    return (T(i1) - s, T(I2) + s)
+end
+
+function _get_extent(::Type{T},
+                     I::AbstractRange{<:Integer}) where {T<:AbstractFloat}
+    s = T(step(I))/T(2)
+    return (T(first(I)) - s, T(last(I)) + s)
+end
+
+function _get_extent(::Type{T},
+                     x1::T, x2::T,
+                     y1::T, y2::T,
+                     tr::AbstractArray{<:Real}) where {T<:AbstractFloat}
+    Ax,Axx,Axy, Ay,Ayx,Ayy = splat_xform(T, tr)
+    x1p = Ax + Axx*x1 + Axy*y1
+    y1p = Ay + Ayx*x1 + Ayy*y1
+    x2p = Ax + Axx*x2 + Axy*y1
+    y2p = Ay + Ayx*x2 + Ayy*y1
+    x3p = Ax + Axx*x1 + Axy*y2
+    y3p = Ay + Ayx*x1 + Ayy*y2
+    x4p = Ax + Axx*x2 + Axy*y2
+    y4p = Ay + Ayx*x2 + Ayy*y2
+    xmin = min(x1p, x2p, x3p, x4p)
+    xmax = max(x1p, x2p, x3p, x4p)
+    ymin = min(y1p, y2p, y3p, y4p)
+    ymax = max(y1p, y2p, y3p, y4p)
     return (xmin, xmax, ymin, ymax)
+end
+
+"""
+
+```julia
+simple_xform!(tr, A, x1p, x2p, y1p, y2p) -> tr
+```
+
+overwrites `tr` with the coefficients of the coordinate transform which maps
+the indices of the 2-dimensional array `A` to the rectangular region defined by
+`x1p`, `x2p`, `y1p` and `y2p`.
+
+Another possibility is to specify the ranges of indices `I` and `J`:
+
+```julia
+simple_xform!(tr, I, J, x1p, x2p, y1p, y2p) -> tr
+```
+
+Yet another possibility is to specify the limits `x1`, `x2`, `y1` and `y2` of
+the rectangular region to map to the output region:
+
+```julia
+simple_xform!(tr, x1, x2, y1, y2, x1p, x2p, y1p, y2p) -> tr
+```
+
+"""
+function simple_xform!(tr::AbstractArray{T},
+                       A::AbstractMatrix,
+                       x1p::Real, x2p::Real,
+                       y1p::Real, y2p::Real) where {T<:AbstractFloat}
+    simple_xform!(tr, axes(A)..., x1p, x2p, y1p, y2p)
+end
+
+function simple_xform!(tr::AbstractArray{T},
+                       I::AbstractRange{<:Integer},
+                       J::AbstractRange{<:Integer},
+                       x1p::Real, x2p::Real,
+                       y1p::Real, y2p::Real) where {T<:AbstractFloat}
+    simple_xform!(tr, I, J, T(x1p), T(x2p), T(y1p), T(y2p))
+end
+
+function simple_xform!(tr::AbstractArray{T},
+                       I::AbstractRange{<:Integer},
+                       J::AbstractRange{<:Integer},
+                       x1p::T, x2p::T,
+                       y1p::T, y2p::T) where {T<:AbstractFloat}
+    di = T(step(I)/2)
+    x1 = T(first(I)) - di
+    x2 = T(last(I)) + di
+    dj = T(step(J)/2)
+    y1 = T(first(J)) - dj
+    y2 = T(last(J)) + dj
+    simple_xform!(tr, x1, x2, y1, y2, x1p, x2p, y1p, y2p)
+end
+
+function simple_xform!(tr::DenseArray{T},
+                       x1::Real, x2::Real,
+                       y1::Real, y2::Real,
+                       x1p::Real, x2p::Real,
+                       y1p::Real, y2p::Real) where {T<:AbstractFloat}
+    simple_xform!(tr, T(x1), T(x2), T(y1), T(y2),
+                  T(x1p), T(x2p), T(y1p), T(y2p))
+end
+
+function simple_xform!(tr::DenseArray{T},
+                       x1::T, x2::T,
+                       y1::T, y2::T,
+                       x1p::T, x2p::T,
+                       y1p::T, y2p::T) where {T<:AbstractFloat}
+    @assert length(tr) == 6
+    ax = (x2p - x1p)/(x2 - x1)
+    bx = (x1p*x2 - x2p*x1)/(x2 - x1)
+    @assert isfinite(ax) && isfinite(bx)
+    ay = (y2p - y1p)/(y2 - y1)
+    by = (y1p*y2 - y2p*y1)/(y2 - y1)
+    @assert isfinite(ay) && isfinite(by)
+    tr[1] = bx
+    tr[2] = ax
+    tr[3] = zero(T)
+    tr[4] = by
+    tr[5] = zero(T)
+    tr[6] = ay
+    return tr
 end
 
 """
@@ -956,5 +1397,325 @@ get_font(val::Integer) =
 
 @noinline throw_bad_text_font(val) =
     throw(ArgumentError(string("invalid text font: ", val)))
+
+"""
+
+```julia
+extremefinitevalues(A) -> (bad, amin, amax)
+```
+
+yields the extreme finite values in array `A` and a boolean indicating
+whether `A` has bad (i.e., non-finite values).  The returned values `amin`
+and `amax` are such that `amin ≤ amax` unless there are no finite values in
+`A` in which case `(true,typemax(T),typemin(T))` is returned, with `T` the
+type of the elements of `A`.
+
+"""
+function extremefinitevalues(A::AbstractArray{T}) where {T<:Real}
+    amin = typemax(T)
+    amax = typemin(T)
+    flag = true
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        flag &= isfinite(val)
+        amin = ifelse(isfinite(val) & (val < amin), val, amin)
+        amax = ifelse(isfinite(val) & (val > amax), val, amax)
+    end
+    return (!flag, amin, amax)
+end
+
+function extremefinitevalues(A::AbstractArray{T}) where {T<:Integer}
+    amin = typemax(T)
+    amax = typemin(T)
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        amin = ifelse(val < amin, val, amin)
+        amax = ifelse(val > amax, val, amax)
+    end
+    return (false, amin, amax)
+end
+
+"""
+
+```julia
+minimumfinitevalue(A) -> (bad, amin)
+```
+
+yields the smallest finite value in array `A` and a boolean indicating
+whether `A` has bad (i.e., non-finite values).  If the elements of `A` are
+of a floating-point type `T`, then `amin` is such that `amin < Inf` unless
+there are no finite values in `A` in which case `(true,typemax(T))`, that
+is `(true,+T(Inf))`, is returned.
+
+"""
+function minimumfinitevalue(A::AbstractArray{T}) where {T<:Real}
+    amin = typemax(T)
+    flag = true
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        flag &= isfinite(val)
+        amin = ifelse(isfinite(val) & (val < amin), val, amin)
+    end
+    return (!flag, amin)
+end
+
+function minimumfinitevalue(A::AbstractArray{T}) where {T<:Integer}
+    amin = typemax(T)
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        amin = ifelse(val < amin, val, amin)
+    end
+    return (false, amin)
+end
+
+"""
+
+```julia
+maximumfinitevalue(A) -> (bad, amax)
+```
+
+yields the largest finite value in array `A` and a boolean indicating
+whether `A` has bad (i.e., non-finite values).  If the elements of `A` are
+of a floating-point type `T`, then `amax` is such that `amax >-Inf` unless
+there are no finite values in `A` in which case `(true,typemin(T))`, that
+is `(true,-T(Inf))`, is returned.
+
+"""
+function maximumfinitevalue(A::AbstractArray{T}) where {T<:Real}
+    amax = typemin(T)
+    flag = true
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        flag &= isfinite(val)
+        amax = ifelse(isfinite(val) & (val > amax), val, amax)
+    end
+    return (!flag, amax)
+end
+
+function maximumfinitevalue(A::AbstractArray{T}) where {T<:Integer}
+    amax = typemin(T)
+    @inbounds @simd for i in eachindex(A)
+        val = A[i]
+        amax = ifelse(val > amax, val, amax)
+    end
+    return (false, amax)
+end
+
+"""
+
+```julia
+rangeofvalues(T, A, vmin, vmax) -> (bad, amin, amax)
+```
+
+"""
+function rangeofvalues(::Type{T}, A::AbstractArray,
+                       ::Nothing, ::Nothing) where {T}
+    bad, amin, amax = extremefinitevalues(A)
+    return (bad, T(amin), T(amax))
+end
+
+function rangeofvalues(::Type{T}, A::AbstractArray,
+                       vmin::Real, ::Nothing) where {T}
+    if isfinite(vmin)
+        bad, vmax = maximumfinitevalue(A)
+        return (bad, T(vmin), T(vmax))
+    else
+        isnan(vmin) && throw(ArgumentError("vmin must not be a `NaN`"))
+        bad, amin, amax = extremefinitevalues(A)
+        if vmin > 0
+            # Exchange min. and max.
+            amin, amax = amax, amin
+        end
+        return (bad, T(amin), T(amax))
+    end
+end
+
+function rangeofvalues(::Type{T}, A::AbstractArray,
+                       ::Nothing, vmax::Real) where {T}
+    if isfinite(vmax)
+        bad, vmin = minimumfinitevalue(A)
+        return (bad, T(vmin), T(vmax))
+    else
+        isnan(vmax) && throw(ArgumentError("vmax must not be a `NaN`"))
+        bad, amin, amax = extremefinitevalues(A)
+        if vmax < 0
+            # Exchange min. and max.
+            amin, amax = amax, amin
+        end
+        return (bad, T(amin), T(amax))
+    end
+end
+
+function rangeofvalues(::Type{T}, A::AbstractArray,
+                       vmin::Real, vmax::Real) where {T}
+    choice = (isfinite(vmin) ? 1 : 0) | (isfinite(vmax) ? 2 : 0)
+    if choice == 3
+        return (have_bad_values(A), T(vmin), T(vmax))
+    elseif choice == 2
+        # vmin is not finite
+        isnan(vmin) && throw(ArgumentError("vmin must not be a `NaN`"))
+        if vmin ≤ vmax
+            bad, amin = minimumfinitevalue(A)
+            return (bad, T(amin), T(vmax))
+        else
+            bad, amax = maximumfinitevalue(A)
+            return (bad, T(amax), T(vmax))
+        end
+    elseif choice == 1
+        # vmax is not finite
+        isnan(vmax) && throw(ArgumentError("vmax must not be a `NaN`"))
+        if vmin ≤ vmax
+            bad, amax = maximumfinitevalue(A)
+            return (bad, T(vmin), T(amax))
+        else
+            bad, amin = minimumfinitevalue(A)
+            return (bad, T(vmin), T(amin))
+        end
+    else
+        isnan(vmin) && throw(ArgumentError("vmin must not be a `NaN`"))
+        isnan(vmax) && throw(ArgumentError("vmax must not be a `NaN`"))
+        bad, amin, amax = extremefinitevalues(A)
+        if vmax < vmin
+            # Exchange min. and max.
+            amin, amax = amax, amin
+        end
+        return (bad, T(amin), T(amax))
+    end
+end
+
+"""
+
+```julia
+rescale(scl, A, vmin, vmax)
+```
+
+yields an array of element type `T` (must be an integer) which maps values of
+array `A` from the range `vmin:vmax` to `first(scl):last(scl)`.  It is possible
+to have `vmin > vmax` or `first(scl) > last(scl)` to reverse the scaling.
+
+If `A` is of floating point type, `bad(scl)` is the value given to bad numbers
+(i.e., *NaN*) and, if `vmin` and `vmax` are not both finite, the result is
+filled with `bad(scl)`.
+
+See [`rescale!`](@ref) for providing the destination array and
+[`rangeofvalues`](@ref) as a mean to determine `vmin` and `vmax`.
+
+"""
+function rescale(scl::AbstractScaling{Ti},
+                 A::AbstractArray{<:Integer,N},
+                 vmin::Real, vmax::Real) where {Ti<:Integer,N}
+    Tf = float(promote_type(typeof(vmin), typeof(vmax)))
+    rescale!(Array{Ti,N}(undef, size(A)), scl, A, Tf(vmin), Tf(vmax))
+end
+
+function rescale(scl::AbstractScaling{Ti},
+                 A::AbstractArray{Tf,N},
+                 vmin::Real, vmax::Real) where {Ti<:Integer,
+                                                Tf<:AbstractFloat,N}
+    rescale!(Array{Ti,N}(undef, size(A)), scl, A, Tf(vmin), Tf(vmax))
+end
+
+"""
+
+```julia
+rescale!(dst, scl, A, vmin, vmax) -> dst
+```
+
+overwrites destination array `dst` with the result or rescaling the values in
+array `A` from the range `vmin:vmax` and according to `scl`.  See
+[`rescale`](@ref) for details.
+
+"""
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::AbstractScaling{Ti},
+                  A::AbstractArray{<:Integer,N},
+                  vmin::Real, vmax::Real) where {Ti<:Integer,N}
+    Tf = float(promote_type(typeof(vmin), typeof(vmax)))
+    rescale!(dst, scl, A, Tf(vmin), Tf(vmax))
+end
+
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::AbstractScaling{Ti},
+                  A::AbstractArray{Tf,N},
+                  vmin::Real, vmax::Real) where {Ti<:Integer,
+                                                 Tf<:AbstractFloat,N}
+    rescale!(dst, scl, A, Tf(vmin), Tf(vmax))
+end
+
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::AbstractScaling{Ti},
+                  A::AbstractArray{<:Integer,N},
+                  vmin::Tf, vmax::Tf) where {Ti<:Integer,
+                                             Tf<:AbstractFloat,N}
+    throw_not_implemented(typeof(scl))
+end
+
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::AbstractScaling{Ti},
+                  A::AbstractArray{Tf,N},
+                  vmin::Tf, vmax::Tf) where {Ti<:Integer,
+                                             Tf<:AbstractFloat,N}
+    throw_not_implemented(typeof(scl))
+end
+
+@noinline throw_not_implemented(::Type{T}) where {T<:AbstractScaling} =
+    error("scaling of type $T is not implemented")
+
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::LinearScaling{Ti},
+                  A::AbstractArray{<:Integer,N},
+                  vmin::Tf, vmax::Tf) where {Ti<:Integer,
+                                             Tf<:AbstractFloat,N}
+    cmin, cmax = first(scl), last(scl)
+    if vmin == vmax
+        cmid = ((cmin + cmax) ÷ 2)
+        @inbounds for i in safe_indices(dst, A)
+            val = A[i]
+            dst[i] = (val > vmax ? cmax :
+                      val < vmin ? cmin : cmid)
+        end
+    else
+        a = (Tf(cmax) - Tf(cmin))/(vmax - vmin)
+        b = Tf(cmin) - a*vmin
+        @inbounds for i in safe_indices(dst, A)
+            val = Tf(A[i])
+            dst[i] = (val ≥ vmax ? cmax :
+                      val ≤ vmin ? cmin : round(Ti, a*val + b))
+        end
+    end
+    return dst
+end
+
+function rescale!(dst::DenseArray{Ti,N},
+                  scl::LinearScaling{Ti},
+                  A::AbstractArray{Tf,N},
+                  vmin::Tf, vmax::Tf) where {Ti<:Integer,
+                                             Tf<:AbstractFloat,N}
+    cmin, cmax, cbad = first(scl), last(scl), bad(scl)
+    if isfinite(vmin) && isfinite(vmin)
+        if vmin == vmax
+            cmid = ((cmin + cmax) ÷ 2)
+            @inbounds for i in safe_indices(dst, A)
+                val = A[i]
+                dst[i] = (isnan(val) ? cbad :
+                          val > vmax ? cmax :
+                          val < vmin ? cmin : cmid)
+            end
+        else
+            a = (Tf(cmax) - Tf(cmin))/(vmax - vmin)
+            b = Tf(cmin) - a*vmin
+            @inbounds for i in safe_indices(dst, A)
+                val = A[i]
+                dst[i] = (isnan(val) ? cbad :
+                          val ≥ vmax ? cmax :
+                          val ≤ vmin ? cmin : round(Ti, a*val + b))
+            end
+        end
+    else
+        # There are no finite values in `A`.
+        fill!(dst, cbad)
+    end
+    return dst
+end
 
 end # module
