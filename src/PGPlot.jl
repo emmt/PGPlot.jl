@@ -20,7 +20,7 @@ include("bindings.jl")
 include("colormaps.jl")
 using .Colormaps
 
-include("interface.jl")
+include("plotting.jl")
 using .Plotting
 
 end # module

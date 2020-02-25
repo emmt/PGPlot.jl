@@ -1,5 +1,5 @@
 #
-# interface.jl --
+# plotting.jl --
 #
 # Implements high-level interface for plotting with the PGPlot library.
 #
