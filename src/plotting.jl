@@ -1668,7 +1668,7 @@ function rescale!(dst::DenseArray{Ti,N},
     cmin, cmax = first(scl), last(scl)
     if vmin == vmax
         cmid = ((cmin + cmax) ÷ 2)
-        @inbounds for i in safe_indices(dst, A)
+        @inbounds for i in all_indices(dst, A)
             val = A[i]
             dst[i] = (val > vmax ? cmax :
                       val < vmin ? cmin : cmid)
@@ -1676,7 +1676,7 @@ function rescale!(dst::DenseArray{Ti,N},
     else
         a = (Tf(cmax) - Tf(cmin))/(vmax - vmin)
         b = Tf(cmin) - a*vmin
-        @inbounds for i in safe_indices(dst, A)
+        @inbounds for i in all_indices(dst, A)
             val = Tf(A[i])
             dst[i] = (val ≥ vmax ? cmax :
                       val ≤ vmin ? cmin : round(Ti, a*val + b))
@@ -1694,7 +1694,7 @@ function rescale!(dst::DenseArray{Ti,N},
     if isfinite(vmin) && isfinite(vmin)
         if vmin == vmax
             cmid = ((cmin + cmax) ÷ 2)
-            @inbounds for i in safe_indices(dst, A)
+            @inbounds for i in all_indices(dst, A)
                 val = A[i]
                 dst[i] = (isnan(val) ? cbad :
                           val > vmax ? cmax :
@@ -1703,7 +1703,7 @@ function rescale!(dst::DenseArray{Ti,N},
         else
             a = (Tf(cmax) - Tf(cmin))/(vmax - vmin)
             b = Tf(cmin) - a*vmin
-            @inbounds for i in safe_indices(dst, A)
+            @inbounds for i in all_indices(dst, A)
                 val = A[i]
                 dst[i] = (isnan(val) ? cbad :
                           val ≥ vmax ? cmax :
