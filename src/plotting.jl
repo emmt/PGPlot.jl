@@ -735,7 +735,7 @@ function heatmap(A::AbstractMatrix{T}, args...;
                  vmin::Union{Nothing,Real} = nothing,
                  vmax::Union{Nothing,Real} = nothing,
                  badcolor::ColorOption = nothing,
-                 kwds...) where {T<:AbstractFloat}
+                 kwds...) where {T<:Real}
     # Get size of region covered by the map.
     box = get_extent(Box{PGFloat}, A, args...)
 
@@ -913,7 +913,7 @@ end
 """
 
 ```julia
-mouse(x0, y0; kwds...) -> (x, y, c)
+mouse([mode = :none, [x0, y0]]; kwds...) -> (x, y, c)
 ```
 
 yields cursor position `(x,y)` and character `c` typed by the user.  The
@@ -923,12 +923,7 @@ for `c`.  For an X-window device, clicking the 1st mouse button is reported as
 an `A`, clicking the 2nd mouse button is reported as a `D` and clicking other
 mouse buttons is reported as an `X`.
 
-Keyword `fig` can be used to specify the figure to consider.
-
-Keyword `color` can be used to specify the color of the line(s) drawn for the
-feedback.
-
-Keyword `mode` can be used to specify the feedback for the user:
+Argument `mode` can be used to specify the feedback for the user:
 
 - If `mode = :none` (the default) no specific feedback is applied.
 
@@ -965,6 +960,12 @@ Argument `(x0,y0)` specifies the position of the anchor point in world
 coordinates.  The anchor point may be omitted if `mode` is not `:line`, `:box`,
 `:vrange` or `:hrange`.
 
+Keyword `fig` can be used to specify the figure to consider.  The default
+is the current one.
+
+Keyword `color` can be used to specify the color of the line(s) drawn for the
+feedback.
+
 The returned cursor position can be a `Point` if the first positional argument
 is `Point` or if the anchor is specified as a `Point`.  For instance:
 
@@ -974,9 +975,8 @@ mouse(Point(x0,y0)) -> Point(x, y), c
 ```
 
 """
-function mouse(;
+function mouse(mode::Symbol = :none;
                fig::FigureOption = nothing,
-               mode::Symbol = :none,
                color::ColorOption = nothing)
     md = (mode == :none  ?  PGInt(0) :
           mode == :hline ?  PGInt(5) :
@@ -990,9 +990,8 @@ function mouse(;
     pgband(md, false, PGFloat((xmin + xmax)/2), PGFloat((ymin + ymax)/2))
 end
 
-function mouse(x0::Real, y0::Real;
+function mouse(mode::Symbol, x0::Real, y0::Real;
                fig::FigureOption = nothing,
-               mode::Symbol = :none,
                color::ColorOption = nothing)
     md = (mode == :none   ?  PGInt(0) :
           mode == :line   ?  PGInt(1) :
