@@ -145,7 +145,7 @@ end
 twice(x) -> (x, x)
 ```
 
-yeilds a 2-tuple with the same value repeated twice.
+yields a 2-tuple with the same value repeated twice.
 
 """
 twice(x) = (x, x)
