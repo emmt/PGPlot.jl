@@ -528,9 +528,8 @@ function query(::Type{T1}, ::Type{T2}, ::Type{T3}, ::Type{T4},
 end
 
 function to_string(buf::PGVector{UInt8}, len::Integer)
-    @assert 0 ≤ len < length(buf)
-    buf[len+1] = 0
-    unsafe_string(pointer(buf), len)
+    0 ≤ len ≤ length(buf) || throw(BoundsError(buf, len))
+    GC.@preserve buf unsafe_string(pointer(buf), len)
 end
 
 """
@@ -2999,13 +2998,12 @@ function pgqinf(item::AbstractString)
     len = Ref{PGInt}(maxlen)
     ccall((:cpgqinf, pgplotlib), Cvoid, (PGString, Ptr{UInt8}, Ptr{PGInt}),
           item, buf, len)
-    len[] ≤ maxlen || error("too long string (unexpected)")
-    i = len[]
-    while i ≥ 1 && buf[i] == ' '
-        i -= 1
+    len = Int(len[])
+    len ≤ maxlen || error("too long string (unexpected)")
+    @inbounds while len ≥ 1 && buf[len] == ' '
+        len -= 1
     end
-    buf[i+1] = 0
-    return unsafe_string(pointer(buf))
+    return to_string(buf, len)
 end
 
 """
