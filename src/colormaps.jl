@@ -124,11 +124,11 @@ function Base.tryparse(::Type{RGBVec{T}}, str::AbstractString) where {T}
 end
 
 # Query indexed color as an RGBVec structure.
-pgqcr(::Type{RGBVec}, ci::Integer) where {T<:AbstractFloat} =
+pgqcr(::Type{RGBVec}, ci::Integer) =
     RGBVec(pgqcr(ci)...)
 pgqcr(::Type{RGBVec{T}}, ci::Integer) where {T<:AbstractFloat} =
     RGBVec{T}(pgqcr(ci)...)
-pgqcr(::Type{RGBVec{UInt8}}, ci::Integer) where {T<:AbstractFloat} =
+pgqcr(::Type{RGBVec{UInt8}}, ci::Integer) =
     RGBVec{UInt8}(pgqcr(RGBVec, ci))
 
 # Set indexed color with an RGBVec structure.
